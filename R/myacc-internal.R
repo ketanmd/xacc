@@ -14,7 +14,6 @@ outhome   <- function(...)
 #' @return location of config file
 known   <- function(...) {
     kf <- paste0(inhome(), '/config/', ...)
-#    kf <- paste0(inhome(), '/known.', ...)
     message('known file is ', kf)
     kf
 }
@@ -46,18 +45,22 @@ bigtext <- function(size = 24)
 
 .knowf <- function() {
 
-  kamap <-
-    utils::read.table(
-      header = TRUE,
-      stringsAsFactors = FALSE,
-      known('accounts')
+  knownaccountsfile <- known('accounts')
+  if (file.exists(knownaccountsfile)) {
+    kamap <-
+      utils::read.table(
+        header = TRUE,
+        stringsAsFactors = FALSE,
+        knownaccountsfile
+      )
+    knownaccounts <- dplyr::mutate(
+      kamap,
+      account = sub('.*?:', '', fullacc),
+      accat   = sub(':.*', '', account)
     )
-  knownaccounts <- dplyr::mutate(
-    kamap,
-    account = sub('.*?:', '', fullacc),
-    accat   = sub(':.*', '', account)
-  )
+  }
   function(party = NULL, field = NULL) {
+    if (!file.exists(knownaccountsfile)) return(party)
     if (is.null(party)) return(knownaccounts)
     retval2 <-
       subset(knownaccounts, grepl(tolower(party), tolower(account)))
