@@ -1,0 +1,18 @@
+2000-10-1 * type:wages matdate:2001-5-31 principal:2600.00 rate:100.0                        post_from:wagespf post_to:wagespt                   id:wages for salary
+2001-8-21 * type:xfer  matdate:2002-4-21 principal:100.00                                    post_from:xferpf  post_to:xferpt                    id:xfer  for xfer
+2004-9-1 *  type:loan  matdate:2005-6-5  principal:100.0 payment:5.00  rate:12 terms:360   from:loanf  to:loant  post_from:loanpf  post_to:loanpt                    id:loan
+2005-8-1 *  type:cd    matdate:2006-4-1  principal:100.0   rate:12.0   from:cdf    to:cdt    post_from:cdpf    post_to:cdpt    return_to:cdrt 
+2006-5-15 * type:tbill matdate:2007-1-1  principal:100.0   discount:99.00 from:tbillf to:tbillt                                   return_to:tbillrt
+2007-1-15 * type:corp  matdate:2008-8-1  principal:100.0   rate:6.0    from:corpf  to:corpt  post_from:corppf  post_to:corppt  return_to:corprt
+2000-1-15 * type:frn  matdate:2008-12-1  principal:100.0   rate:6.0    from:frnf   to:frnt   post_from:frnpf   post_to:frnpt   return_to:frnrt
+2010-1-1 * move:100 from:movef to:movet
+2010-1-1 * move:100_aaa_@_1 from:movef to:movet
+2010-1-1 * move:100_bbb_(@@)_543.00 from:movef to:movet
+P 2012-1-1 FO 34.4
+P 2013-1-2 OF 43.33
+
+
+2011/1/1 * full transaction
+  fullt  100.00
+  fullf
+

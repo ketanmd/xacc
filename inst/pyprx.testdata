@@ -1,0 +1,7 @@
+date        units    price    q_quote
+2011-01-01    $        1        TRUE
+2011-01-05    FA       2        TRUE
+2011-01-06    FA       3        FALSE
+2011-01-07    FA       5        TRUE
+2011-01-08    FA       7        FALSE
+2011-01-09    FA       11       TRUE
