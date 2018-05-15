@@ -4,10 +4,10 @@
 \alias{supd}
 \title{invoke upd with messages suppressed, update accounting info by reprocessing all input files}
 \usage{
-supd(acceptalerts = FALSE)
+supd(reprocess = FALSE)
 }
 \arguments{
-\item{acceptalerts}{should badly processed csv lines be written to badcsv files}
+\item{reprocess}{reprocess files even if nothing changes}
 }
 \description{
 invoke upd with messages suppressed, update accounting info by reprocessing all input files

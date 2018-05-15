@@ -29,7 +29,7 @@ makenewpassbook <-
                  stringsAsFactors = FALSE)
 
     cbind(knownaccounts, adates) %>%
-      subset(qPB == 'Y') %>%
+      subset(.$qPB == 'Y') %>%
       plyr::dlply(., c('date', 'accat'), function(x) {
         paste0(
           collapse = '',
@@ -46,7 +46,7 @@ makenewpassbook <-
       unlist %>%
       writeLines(ploc)
     cbind(knownaccounts, adates) %>%
-      subset(qPB == 'Y') %>%
+      subset(.$qPB == 'Y') %>%
       plyr::dlply(., c('date'), function(xx) {
         c(
           list(paste0('################## Begin ',

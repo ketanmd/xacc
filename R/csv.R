@@ -10,6 +10,10 @@
 # 4      $  Retire:JPM:K -471085.7 -471085.7      1 2013-06-30 -504675.07  -49016.45
 # these were all taken care of for now.
 
+swa <- function(x) {
+  x %>% dplyr::mutate(., foo = .$bar/2)
+}
+
 read.bad <- function(csvf) {
   cdata <- utils::read.csv(csvf, stringsAsFactors = FALSE)
   cdata$from <- paste0(cdata$from, basename(csvf))
@@ -36,7 +40,7 @@ read.fredzip <- function(csvf) {
   }
   cdata <- plyr::rbind.fill(zans)
   fidmapfile <- known('fredzip.seriesids')
-  cdata <- subset(cdata, Date > as.Date('2000-01-01') & !is.na(Last.Price))
+  cdata %<>% subset(., .$Date > as.Date('2000-01-01') & !is.na(Last.Price))
   cdata <- within(cdata, {
     if (file.exists(fidmapfile))
       Symbol <- .aamf(Symbol, fidmapfile, Symbol, 'Title', 'myid')
@@ -66,7 +70,8 @@ read.fred <- function(csvf) {
 read.yahoo <- function(csvf) {
   filedate <- .filedate(csvf)
   cdata <- utils::read.csv(csvf, stringsAsFactors = FALSE)
-  if (filedate > 20171120)
+  #str(list(cdata,filedate))
+  if (filedate > as.Date('2017/11/20'))
       return(list(within(subset(cdata, Symbol != ''), {
           Symbol = paste0('q_', Symbol)
           Name   = Symbol
@@ -93,48 +98,67 @@ read.google <- function(csvf) {
         warning("No last price found in google csv file ", csvf, " - skipping this file")
         return(NULL)
     }
-    cdata <- within(subset(cdata, Symbol != ''), {
-        Date       = filedate
-        Name       = sub('Wellesley[^ ]+', 'Wellesley', Name)
-        Last.Price = Last.price
-        Symbol     = paste0('q_', Symbol)
-        from       = basename(csvf)
-        Account   = 'unk'
-        Value      = NaN
-        Position   = NaN
-    })
+    cdata %<>%
+      subset(., .$Symbol != '') %>%
+      transform(.,
+                Date = filedate,
+                Name = sub('Wellesley[^ ]+', 'Wellesley', .$Name),
+                Last.Price = .$Last.price,
+                Symbol = paste0('q_', .$Symbol),
+                from = basename(csvf),
+                Account = 'unk',
+                Value = NaN,
+                Position = NaN
+                )
     list(cdata)
 }
-read.lt <- function(csvf) {
-  cdata <- utils::read.csv(csvf, stringsAsFactors = FALSE)
-  cdata <- within(cdata, {
-    Quantity <- .tonumeric(Quantity)
-    Price    <- .tonumeric(Price)
-    Amount   <- .tonumeric(Amount)
-    Action[grepl('Gain/Loss', Transaction.Type)] <-
-      'REINVDIV'
+
+read.lt <- function(csvf) { # something broken here ?
+  famount <- function(Action, Amount) {
+    Amount <- .tonumeric(Amount)
     Amount <- ifelse(Action == 'Sell', -Amount, Amount)
     Amount[Action == 'REINVDIV'] <- '$ 0'
-    Security[Security == 'RFLP'] <- 'med'
-    Security[Security == 'RIEFLLC'] <- 'rief'
-
-    FromAccount <-
-      Account <- rep('LTacct', length(Transaction.Type))
-    FromAccount[grepl('Employer Match ', Transaction.Type)] <-
-      'LTmatch'
-    FromAccount[grepl('Roth Deferrals ', Transaction.Type)] <-
-      'LTroth'
-    FromAccount[grepl('Profit Sharing ', Transaction.Type)] <-
-      'LTsharing'
-
-    acmapfile    <- known('lt.accountids')
-    if (file.exists(acmapfile)) {
-      Account <- .aamf(Account, acmapfile, Account, 'AccNum', 'AccName')
+    Amount
+  }
+  ffromaccount <- function(Transaction.Type, acmapfile) {
+    FromAccount <- rep('LTacct', length(Transaction.Type))
+    FromAccount[grepl('Employer Match ', Transaction.Type)] <-  'LTmatch'
+    FromAccount[grepl('Roth Deferrals ', Transaction.Type)] <-    'LTroth'
+    FromAccount[grepl('Profit Sharing ', Transaction.Type)] <-    'LTsharing'
+    if (file.exists(acmapfile))
       FromAccount <- .aamf(FromAccount, acmapfile, FromAccount, 'AccNum' , 'AccName')
-    }
-    Date = .cleandates(Date)
+    FromAccount
+  }
+  faccount <- function(Transaction.Type, acmapfile) {
+    Account <- rep('LTacct', length(Transaction.Type))
+    if (file.exists(acmapfile))
+      Account <- .aamf(Account, acmapfile, Account, 'AccNum', 'AccName')
+    Account
+  }
+  fsecurity <- function(Security) {
+    Security[Security == 'RFLP'] = 'med'
+    Security[Security == 'RIEFLLC'] = 'rief'
+    Security
+  }
+  faction <- function(Action, Transaction.Type) {
+    Action[grepl('Gain/Loss', Transaction.Type)] = 'REINVDIV'
+    Action
+  }
+  cdata <- utils::read.csv(csvf, stringsAsFactors = FALSE)
+  acmapfile = known('lt.accountids')
+  cdata %<>% dplyr::mutate(.,
+    Quantity = .tonumeric(.$Quantity),
+    Price    = .tonumeric(.$Price),
+    Action   = faction(.$Action, .$Transaction.Type),
+    Amount   = famount(Action, .$Amount),
+    Security = fsecurity(.$Security),
+    Account  = faccount(.$Transaction.Type, acmapfile),
+    FromAccount = ffromaccount(.$Transaction.Type, acmapfile),
+    Date = .cleandates(.$Date),
     from = basename(csvf)
-  })
+  )
+
+#  str(list('new read.lt', cdata))
   list(cdata)
 }
 read.csvf <- function(csvf) {
@@ -320,17 +344,24 @@ read.vanpos <- function(csvf) {
     cdata = utils::read.csv(textConnection(clines[begs[ii]:ends[ii]]))
     if (!('Total.Value' %in% names(cdata))) next
     acmapfile   <- known('van.accountids')
+    cdata %<>% dplyr::mutate(Position = .$Shares,
+                             Value    = .$Total.Value,
+                             Last.Price = .$Share.Price,
+                             Date = .cleandates(sub('\\..*', '', basename(csvf))),
+                             Account = .$Account.Number,
+                             Name = .$Investment.Name,
+                             Symbol = as.character(.$Symbol))
     cdata <- within(cdata, {
-      Position    <- Shares
-      Value       <- Total.Value
-      Last.Price  <- Share.Price
-      Date        <- .cleandates(sub('\\..*', '', basename(csvf)))
-      Account     <- Account.Number
+#      Position    <- Shares
+#      Value       <- Total.Value
+#      Last.Price  <- Share.Price
+#      Date        <- .cleandates(sub('\\..*', '', basename(csvf)))
+#      Account     <- Account.Number
       if (file.exists(acmapfile))
         Account <- .aamf(Account, acmapfile, Account, 'AccNum', 'AccName')
-      Name <- Investment.Name
+#      Name <- Investment.Name
 
-      Symbol <- as.character(Symbol)
+#      Symbol <- as.character(Symbol)
       inmapfile <- known('van.investment.names')
       if (file.exists(inmapfile)) {
           Symbol <- .fixknown(Symbol, Investment.Name, inmapfile)
@@ -347,7 +378,7 @@ read.vanpos <- function(csvf) {
   return(alld)
 }
 
-.fixknown <- function(sym, iname, inmapfile) {
+.fixknown <- function(sym, iname, inmapfile, symdefault = '') {
     readLines(inmapfile) -> inmaptable
     inmapid    <- sub(' .*', '', inmaptable)
     inmaptable <- sub('.*? ', '', inmaptable)
@@ -379,7 +410,7 @@ read.vanpos <- function(csvf) {
     sym[badsym][fixable] <- inmapid[goodn[fixable]]
 
 #    print(list(goodn,fixable,inmapid[goodn[fixable]], sym[badsym]))
-
+    sym[sym == ''] <- symdefault
     return(sym)
 }
 
@@ -397,24 +428,25 @@ read.van <- function(csvf) {
 #    print(as.data.frame(cdata[as.character(cdata$Symbol) == ''
 #                             & as.character(cdata$Investment.Name) == 'VANGUARD FEDERAL MONEY MARKET FUND',c(2,4,5,6,7,8,9,10)]))
 
-    cdata <- within(cdata, {
-      Account  <- Account.Number
-
-      acmapfile <- known('van.accountids')
-      if (file.exists(acmapfile))
-        Account <- .aamf(Account, acmapfile, Account, 'AccNum', 'AccName')
-
-      FromAccount <- Account
-      Action    <- as.character(Transaction.Type)
-      Date      <- .cleandates(Trade.Date)
-      Security  <- as.character(Symbol)
-
-      inmapfile <- known('van.investment.names')
-      if (file.exists(inmapfile)) {
-          Security <- .fixknown(Security, Investment.Name, inmapfile)
-          Security <- ifelse(Security == '', 'cash', Security)
-      }
-
+    acmapfile <- known('van.accountids')
+    faccount <- function(Account, acmapfile) {
+        if (file.exists(acmapfile))
+            Account <- .aamf(Account, acmapfile, Account, 'AccNum', 'AccName')
+        Account
+    }
+    inmapfile <- known('van.investment.names')
+    cdata %<>% dplyr::mutate(
+                          Account     = faccount(.$Account.Number, acmapfile),
+                          FromAccount = faccount(.$Account.Number, acmapfile),
+                          Action      = as.character(.$Transaction.Type),
+                          Date        = .cleandates(.$Trade.Date),
+                          Amount      = abs(.$Net.Amount),
+                          Quantity    = .$Shares,
+                          Price       = .$Share.Price,
+                          Security    = as.character(.$Symbol)
+                          )
+    if (file.exists(inmapfile))
+        cdata %<>% dplyr::mutate(Security = .fixknown(.$Security, .$Investment.Name, inmapfile, 'cash'))
 
 #family@perfect:~/money/accounting$ cat */*.van*.csv | sort  | uniq | egrep -v "Account Number|,Contribution|,Dividend|,Sweep (in|out)|,Reinvestment \((LT|ST) gain\)|,Transfer \((Outgoing|incoming)\)|,Capital gain \((LT|ST)\)|,Interest|,Corp Action|,Funds Received|,(Buy|Sell),|,(Buy|Sell) \(exchange\),|,Share Conversion \((incoming|outgoing)\),|,Conversion \((outgoing|incoming)\)|,Transfer \(outgoing\)|,Rollover" | grep "/201"
 
@@ -449,87 +481,63 @@ read.van <- function(csvf) {
 #      "Buy Cancel"                  #   >   <      [ Shares = -Shares     , Net.Amount = -Net.Amount ]
 #      "Corp Action (Redemption)"    #   >   >      [ Shares = -Shares     , Net.Amount =  Net.Amount ]
 
-      Quantity <- Shares
-      Price    <- Share.Price
-      Amount   <- abs(Net.Amount)
+    a1 <- c('Transfer (outgoing)',
+            'Transfer (Outgoing)',
+            'Transfer (incoming)')
+    cdata[cdata$Action %in% a1,] %<>% dplyr::mutate(Amount = abs(.$Net.Amount))
+    cdata[cdata$Action %in% a1 & cdata$Security == 'cash',] %<>% dplyr::mutate(Quantity = .$Net.Amount,
+                                                                               Security = '$')
 
-      a1 <- c('Transfer (outgoing)',
-              'Transfer (Outgoing)',
-              'Transfer (incoming)')
-      c1 <- Action %in% a1
-      c1a <- Security == 'cash'
-      Amount   <- ifelse(c1, abs(Net.Amount), Amount)
-      Quantity <- ifelse(c1 & c1a, Net.Amount, Quantity)
-      Security  <- ifelse(c1 & c1a, '$', Security)
-
-      a2 <- c('Sweep in', 'Sweep out',
-              'Conversion (incoming)',
-              'Conversion (outgoing)')
-      c2 <- Action %in% a2
-      Amount <- ifelse(c2, abs(Net.Amount), Amount)
-      Quantity <- ifelse(c2, -Net.Amount, Quantity)
-      Security  <- ifelse(c2, '$', Security)
-
-      a3 <- c('Reinvestment (LT gain)',
-              'Reinvestment (ST gain)',
-              'Reinvestment',
-              'Contribution',
-              'Share Conversion (outgoing)',
-              'Share Conversion (incoming)')
-      c3 <- Action %in% a3
-      c31 <- Action %in% a3 & Quantity == 0
-      Amount <- ifelse(c3, abs(Net.Amount), Amount)
-      Quantity <- ifelse(c31, -Net.Amount, Quantity)
-      Security  <- ifelse(c31, '$', Security)
-
-      a4 <- c('Dividend')
-      c4 <- Action %in% a4
-      Amount  <- ifelse(c4, "$ 0", Amount)
-      Quantity <- ifelse(c4, abs(Net.Amount), Quantity)
-      FromAccount <- ifelse(c4, 'Dividends', FromAccount)
-      Security  <- ifelse(c4, '$', Security)
-
-      a5 <- c('Buy', 'Buy (exchange)', 'Sell', 'Sell (exchange)')
-      c5 <- Action %in% a5
-      Amount   <- ifelse(c5, abs(Net.Amount), Amount)
-      Quantity <- ifelse(c5, Shares, Quantity)
-      Price    <- ifelse(c5, Share.Price, Price)
-
-      a6 <- c('Interest', 'Capital gain (LT)', 'Capital gain (ST)')
-      c6 <- Action %in% a6
-      Amount  <- ifelse(c6, "$ 0", Amount)
-      Quantity <- ifelse(c6, abs(Net.Amount), Quantity)
-      FromAccount <- ifelse(c6, 'Dividends', FromAccount)
-      Security  <- ifelse(c6, '$', Security)
-
-      a7 <- c('Buy Cancel', 'Corp Action (Redemption)')
-      c7 <- Action %in% a7
-      Amount   <- ifelse(c7, abs(Net.Amount), Amount)
-      Quantity <- ifelse(c7, -Shares, Quantity)
-      Price    <- ifelse(c7, Share.Price, Price)
-
-      a2a <- c('Funds Received')
-      c2a <- Action %in% a2a
-      Amount <- ifelse(c2a, abs(Net.Amount), Amount)
-      Quantity <- ifelse(c2a, Net.Amount, Quantity)
-      Security  <- ifelse(c2a, '$', Security)
-      Amount <- ifelse(c2a, 0, Amount)
-      Quantity <- ifelse(c2a, 0, Quantity)
-      Price    <- ifelse(c2a, 0, Price)
-
-
-      a8 <- c('Rollover (incoming)')
-      c8 <- Action %in% a8
-      Amount   <- ifelse(c8, '$ 0', Amount)
-      Quantity <- ifelse(c8, abs(Net.Amount), Quantity)
-      Price    <- ifelse(c8, 0, Price)
-
-      a1 <- a2 <- a2a <- a3 <- a31 <- a4 <- a5 <- a6 <- a7 <- a8  <- a9 <- a10 <- NULL
-      c1 <- c2 <- c2a <- c3 <- c31 <- c4 <- c5 <- c6 <- c7 <- c8  <- c9 <- c10 <- NULL
-
-      from <- basename(csvf)
-    })
-
+    cdata[cdata$Action %in% c('Sweep in', 'Sweep out',
+                              'Conversion (incoming)',
+                              'Conversion (outgoing)'),] %<>% dplyr::mutate(Amount = abs(.$Net.Amount),
+                                                                            Quantity = -.$Net.Amount,
+                                                                            Security = '$')
+    
+    a3 <- c('Reinvestment (LT gain)',
+            'Reinvestment (ST gain)',
+            'Reinvestment',
+            'Contribution',
+            'Share Conversion (outgoing)',
+            'Share Conversion (incoming)')
+    cdata[cdata$Action %in% a3,] %<>% dplyr::mutate(Amount = abs(.$Net.Amount))
+    cdata[cdata$Action %in% a3 & cdata$Quantity == 0,] %<>% dplyr::mutate(Quantity = -.$Net.Amount,
+                                                                          Security = '$')
+    
+    cdata[cdata$Action %in% c('Dividend'),] %<>% dplyr::mutate(Amount = '$ 0',
+                                                               Quantity = abs(.$Net.Amount),
+                                                               FromAccount = 'Dividends',
+                                                               Security = '$')
+    
+    cdata[cdata$Action %in% c('Buy', 'Buy (exchange)', 'Sell', 'Sell (exchange)'),] %<>% 
+        dplyr::mutate(Amount = abs(.$Net.Amount),
+                      Quantity = .$Shares,
+                      Price = .$Share.Price)
+    
+    cdata[cdata$Action %in% c('Interest', 'Capital gain (LT)', 'Capital gain (ST)'),] %<>%
+        dplyr::mutate(Amount = '$ 0',
+                      Quantity = abs(.$Net.Amount),
+                      FromAccount = 'Dividends',
+                      Security = '$')
+    
+    cdata[cdata$Action %in% c('Buy Cancel', 'Corp Action (Redemption)'),] %<>%
+        dplyr::mutate(Amount = abs(.$Net.Amount),
+                      Quantity = -.$Shares,
+                      Price = .$Share.Price)
+    
+    cdata[cdata$Action %in% c('Funds Received'),] %<>% dplyr::mutate(Amount = abs(.$Net.Amount),
+                                                                     Quantity = .$Net.Amount,
+                                                                     Security = '$') %>%
+        dplyr::mutate(Amount = 0,
+                      Quantity = 0,
+                      Price = 0)
+    
+    cdata[cdata$Action %in% c('Rollover (incoming)'),] %<>% dplyr::mutate(Amount = '$ 0',
+                                                                          Quantity = abs(.$Net.Amount),
+                                                                          Price = 0)
+    
+    cdata %<>% dplyr::mutate(from = basename(csvf))
+    
     alld[[length(alld) + 1]] <- cdata
   }
   return(alld)
@@ -587,15 +595,26 @@ posprocess <- function(csvfiles) {
     if (grepl('hsbc', bcsvf))     cdata <- read.hsbcpos(csvf)
     if (is.null(cdata)) next()
     for (ialld in 1:length(cdata)) {
-      alld[[length(alld)+1]] <-
-        subset(cdata[[ialld]][, c('Date',
-                           'Account',
-                           'Symbol',
-                           'Position',
-                           'Last.Price',
-                           'Value',
-                           'Name',
-                           'from')], !is.na(Last.Price) & Last.Price != 0)
+    #  str(list(bcsvf,cdata[[ialld]]))
+      cdata[[ialld]][, c('Date',
+                                  'Account',
+                                  'Symbol',
+                                  'Position',
+                                  'Last.Price',
+                                  'Value',
+                                  'Name',
+                                  'from')] %>%
+        subset(., !is.na(.$Last.Price) & .$Last.Price != 0) ->
+        alld[[length(alld)+1]]
+#      alld[[length(alld)+1]] <-
+#        subset(cdata[[ialld]][, c('Date',
+#                           'Account',
+#                           'Symbol',
+#                           'Position',
+#                           'Last.Price',
+#                           'Value',
+#                           'Name',
+#                           'from')], !is.na(Last.Price) & Last.Price != 0)
     }
   }
   return(alld)
@@ -626,9 +645,9 @@ csvprocess <- function(csvfiles, badcsvfile = '') {
                 function(x)
                   x[x$from == x$from[nrow(x)], , drop = FALSE]) %>%
       #identity %T>% str %>%
-      subset(., !grepl('bad', from)) %>%
-      subset(., !(Quantity == 0 & Price == 0 &
-                    (Amount == 0 | Amount == '$ 0'))) -> a
+      subset(., !grepl('bad', .$from)) %>%
+      subset(., !(.$Quantity == 0 & .$Price == 0 &
+                    (.$Amount == 0 | .$Amount == '$ 0'))) -> a
     if (!is.null(outfile))
       utils::write.table(a, outfile, quote = FALSE,sep = ' : ', row.names = FALSE)
     return(a)
@@ -734,7 +753,7 @@ csvprocess <- function(csvfiles, badcsvfile = '') {
     message('Really, No transactions found.')
     return(c(''))
   }
-  subset(alltrans, is.na(Quantity)) -> alerts
+  alltrans %>% subset(., is.na(.$Quantity)) -> alerts
   if (nrow(alerts)) {
     if (badcsvfile != '') {
       message('Accepting bad lines into ', badcsvfile, '\n')
@@ -754,7 +773,7 @@ csvprocess <- function(csvfiles, badcsvfile = '') {
     transprocess(csvfiles) %>% f_trans -> alltrans
     posprocess(csvfiles) %>% f_posprices -> invisible
 
-    subset(alltrans, Quantity == 0) -> alerts
+    alltrans %>% subset(., .$Quantity == 0) -> alerts
     if (nrow(alerts)) {
       warning(
         "========== OCHOA ALERT =========\n",

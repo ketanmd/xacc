@@ -53,19 +53,18 @@ bigtext <- function(size = 24)
         stringsAsFactors = FALSE,
         knownaccountsfile
       )
-    knownaccounts <- dplyr::mutate(
-      kamap,
+    kamap %>%  dplyr::mutate(.,
       account = sub('.*?:', '', fullacc),
       accat   = sub(':.*', '', account)
-    )
+    ) -> knownaccounts
   }
   function(party = NULL, field = NULL) {
     if (!file.exists(knownaccountsfile)) return(party)
     if (is.null(party)) return(knownaccounts)
-    retval2 <-
-      subset(knownaccounts, grepl(tolower(party), tolower(account)))
-    retval <-
-      subset(knownaccounts, tolower(party) == tolower(account))
+    knownaccounts %>%
+      subset(., grepl(tolower(party), tolower(.$account))) -> retval2
+    knownaccounts %>%
+      subset(., tolower(party) == tolower(.$account)) -> retval
     if (nrow(retval) == 1) return(retval[1, field])
     return(party)
   }

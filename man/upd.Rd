@@ -4,10 +4,10 @@
 \alias{upd}
 \title{update accounting info by reprocessing all input files}
 \usage{
-upd(acceptalerts = FALSE, verbose = FALSE)
+upd(reprocess = FALSE, verbose = TRUE)
 }
 \arguments{
-\item{acceptalerts}{should badly processed csv lines be written to badcsv files}
+\item{reprocess}{reprocess files even if nothing changes}
 
 \item{verbose}{turn on debugging output ?}
 }

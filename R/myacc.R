@@ -5,6 +5,11 @@ utils::globalVariables(c('.', '%>%', '%<>%', '%T>%'))
 #' @export
 findcsvfiles <- function() Sys.glob(inhome('/*/*.csv'))
 
+#' find all configfiles to be processed
+#'
+#' @export
+findconfigfiles <- function() Sys.glob(inhome('/config/*')) %>% grep('~$', ., value = TRUE, invert = TRUE)
+
 #' find all blocksfiles to be processed
 #'
 #' @export
@@ -49,7 +54,7 @@ cb   : cs + notacc(iacc)
 cc   : cash          : cs | notacc(iacc) | tunits($)
 ci   : brokers       : cs | notacc(iacc) | notunits($)
 ca   : adjustments   : cs | adj > thresh[1000]
-cx   : adjustments   : ca | tariffs only
+cax  : adjustments   : ca | expenses
 cf   : fixed         : cs | fixeddeposits
 cl   : locked up now : cf | matdate>date
 cby  : table(byf, c.[ci])
@@ -64,7 +69,7 @@ pby  : plot(byf, c.[ci], bigfont[8])
 anychanges <- function() length(changedfiles()) > 0
 
 changedfiles <- function() {
-    infiles <- c(findcsvfiles(), findblocksfiles())
+    infiles <- c(findcsvfiles(), findblocksfiles(), findconfigfiles())
     outfile <- outhome('/csv.passbook')
     if (!file.exists(outfile)) return(infiles)
     newinfiles <- utils::file_test('-nt', setdiff(infiles, outfile), outfile)
@@ -72,19 +77,19 @@ changedfiles <- function() {
 }
 
 #' invoke upd with messages suppressed, update accounting info by reprocessing all input files
-#' @param acceptalerts should badly processed csv lines be written to badcsv files
+#' @param reprocess reprocess files even if nothing changes
 #' @export
-supd <- function(acceptalerts = FALSE) suppressMessages(upd(acceptalerts))
+supd <- function(reprocess = FALSE) suppressMessages(upd(reprocess, verbose = FALSE))
 
 #' update accounting info by reprocessing all input files
-#' @param acceptalerts should badly processed csv lines be written to badcsv files
+#' @param reprocess reprocess files even if nothing changes
 #' @param verbose turn on debugging output ?
 #' @export
-upd <- function(acceptalerts = FALSE, verbose = FALSE) {
+upd <- function(reprocess = FALSE, verbose = TRUE) {
   #############
 
   outfile <- outhome('/csv.passbook')
-  badcsvfile   <- ifelse(acceptalerts, inhome('/badcsv/', Sys.Date(), '.bad.csv'), '')
+  badcsvfile   <- inhome('/badcsv/', Sys.Date(), '.bad.csv')
   csvfiles     <- findcsvfiles()
   blocksfiles  <- setdiff(findblocksfiles(), outfile)
 
@@ -96,7 +101,7 @@ upd <- function(acceptalerts = FALSE, verbose = FALSE) {
   }
   if (!dir.exists(outhome(''))) dir.create(outhome(''))
 
-  if (!anychanges()) {
+  if (!anychanges() && !reprocess) {
     message('No input files appear to have changed.')
     message('Nothing to do.')
     return(invisible(FALSE))
@@ -262,24 +267,29 @@ valattach <- function(a, p) {
 }
 
 xfields <- function(a) {
-    dplyr::mutate(a,
-                  month = lubridate::ceiling_date(date, 'month') + lubridate::days(-1),
-                  year  = lubridate::ceiling_date(date, 'year')  + lubridate::days(-1),
-                  account = as.character(account),
-                  account = sub('Cash:((SCTY|UST):.*|.*:(cd|fixed))',
-                                'Bonds:\\1', account),
-                  account = ifelse(grepl('^B_', units),
-                                   sub('.*?:(.*)', 'Bonds:\\1', account),
-                                   account),
-                  account = ifelse(grepl('med|rtc|rida|ridge', units),
-                                   sub('.*?:(.*)', 'Ren:\\1', account),
-                                   account),
-                  account = as.factor(account),
-                  place = sub('(.*?:.*?):.*', '\\1', account),
-                  acctype = factor(sub(':.*', '', account),
-                                   levels = qw('Cash,Broker,Bonds,Ren,Retire,Earnings,Income,Interest,Tax,Trips,Expenses,Equity'),
-                                   ordered = TRUE))
+  fixaccount <- function(account,units) {
+    account %<>%
+      as.character %>%
+      sub('Cash:((SCTY|UST):.*|.*:(cd|fixed))',
+                  'Bonds:\\1', .) %>%
+      ifelse(grepl('^B_', units),
+             sub('.*?:(.*)', 'Bonds:\\1', .), .)
+    runits <-grep('med|rtc|rida|ridge', units)
+    account[runits] <- sub('.*?:(.*)', 'Ren:\\1', account[runits])
+    as.factor(account)
+  }
+  fixacctype <- function(account)
+    factor(sub(':.*', '', account),
+           levels = qw('Cash,Broker,Bonds,Ren,Retire,Earnings,Income,Interest,Tax,Trips,Expenses,Equity'),
+           ordered = TRUE)
 
+  a %>%
+    dplyr::mutate(.,
+                  month   = lubridate::ceiling_date(date, 'month') + lubridate::days(-1),
+                  year    = lubridate::ceiling_date(date, 'year')  + lubridate::days(-1),
+                  account = fixaccount(.$account,.$units),
+                  place   = sub('(.*?:.*?):.*', '\\1', fixaccount(.$account, .$units)),
+                  acctype = fixacctype(fixaccount(.$account, .$units)))
 }
 
 #' utility to extract note fields
@@ -288,7 +298,7 @@ xfields <- function(a) {
 #' @export
 notefield <- function(x, f) {
     fname <- deparse(substitute(f))
-    x %<>% subset(grepl(paste0(' ', fname, ':'), note))
+    x %<>% subset(., grepl(paste0(' ', fname, ':'), .$note))
     x[[fname]] <- sub(paste0('.* ',fname,':(.*?) .*'), '\\1', x$note)
     x
 }
@@ -301,7 +311,7 @@ sumt <- function(a, byfields = c('account', 'units')) {
     if (!q_has_cost) a$cost <- 0.0
 
     (a %<>% identity
-      %>% dplyr::arrange(., date)
+      %>% dplyr::arrange(., .$date)
       ## first, aggregate respecting units
       %>% dplyr::group_by_at(., union('units', byfields))
       %>% dplyr::summarize(.,
@@ -312,10 +322,10 @@ sumt <- function(a, byfields = c('account', 'units')) {
                            cost = sum(cost)
       )
       %>% dplyr::ungroup(.)
-      %>% dplyr::mutate(., date = Date, Date = NULL)
-      %>% subset(., round(amount, 4) != 0 |
-                   round(val, 4) != 0 |
-                   round(cost, 4) != 0)
+      %>% dplyr::mutate(., date = .$Date, Date = NULL)
+      %>% subset(., round(.$amount, 4) != 0 |
+                   round(.$val, 4) != 0 |
+                   round(.$cost, 4) != 0)
       ## second, aggregate across units
       %>% dplyr::group_by_at(., byfields)
       %>% dplyr::summarize(.,
@@ -326,17 +336,17 @@ sumt <- function(a, byfields = c('account', 'units')) {
       ## compute cumulative quantities
       %>% dplyr::arrange_(., c(byfields, 'val', intersect('acctype', names(a))))
       %>% dplyr::mutate(.,
-                        date = Date,
+                        date = .$Date,
                         Date = NULL,
-                        cval = cumsum(val),
-                        ccost = cumsum(cost),
-                        cnet = cval - ccost)
+                        cval = cumsum(.$val),
+                        ccost = cumsum(.$cost),
+                        cnet = cumsum(.$val) - cumsum(.$cost))
       )
     tlike <- byfields %in% c('year','month','date')
     if (sum(tlike) > 0 && sum(tlike) != length(byfields)) {
       (a %<>% identity
          %>% dplyr::group_by_at(., setdiff(byfields, c('year','month','date')))
-         %>% dplyr::mutate(., cbyval = cumsum(val))
+         %>% dplyr::mutate(., cbyval = cumsum(.$val))
          %>% dplyr::ungroup(.)
       )
     }
@@ -357,12 +367,12 @@ sumt <- function(a, byfields = c('account', 'units')) {
 xg <- function(xa, byfields) {
   byfields <- sub('year|month', 'date', byfields)
   xa %<>% dplyr::arrange_(c(byfields, 'val'))
-  if ('acctype' %in% names(xa))  xa %<>% dplyr::arrange(acctype)
-  xa %<>% dplyr::mutate(cval = cumsum(val))
+  if ('acctype' %in% names(xa))  xa %<>% dplyr::arrange(.$acctype)
+  xa %<>% dplyr::mutate(cval = cumsum(.$val))
 
 #  if ('place' %in% names(xa))
 #      xa %<>% dplyr::group_by(place) %>% dplyr::mutate(cpval = cumsum(val)) %>% dplyr::ungroup(.)
-  if ('cost' %in% names(xa)) xa <- dplyr::mutate(xa, ccost = cumsum(cost), cnet = cval-ccost)
+  if ('cost' %in% names(xa)) xa <- dplyr::mutate(xa, ccost = cumsum(.$cost), cnet = .$cval-.$ccost)
   .dig(xa, 2)
 }
 
@@ -406,7 +416,7 @@ now <- function(aca, before = 0, after = 0)
 #' @param a regular expression of accounts to select
 #' @export
 acc <- function(aca, a)
-    subset(aca, grepl(a, account, ignore.case = TRUE))
+    aca %>% subset(., grepl(a, .$account, ignore.case = TRUE))
 
 #' account deselection
 #' @param aca transactions object
@@ -414,14 +424,15 @@ acc <- function(aca, a)
 #' @export
 notacc <-
   function(aca, a)
-    subset(aca, !grepl(a, account, ignore.case = TRUE))
+    (!grepl(a, aca$account, ignore.case = TRUE)) %>%
+    subset(aca, .)
 
 #' units selection
 #' @param aca transactions object
 #' @param u regular expression of units to select
 #' @export
 tunits  <- function(aca, u)
-  subset(aca, grepl(u, units, ignore.case = TRUE))
+  aca %>% subset(., grepl(u, units, ignore.case = TRUE))
 
 #' units selection
 #' @param aca transactions object
@@ -470,21 +481,21 @@ ci <- function()
 #' @param threshold only adjustments absolutely bigger than threshold
 #' @export
 ca <- function(threshold = 0)
-    cs() %>% subset(grepl('^balance', note) & abs(amount) > threshold)
+    cs() %>% subset(grepl('^balance', .$note) & abs(.$amount) > threshold)
 
 #' see xpense entries : absolutely bigger than threshold (default:1000)
 #' @param threshold only expense adjustments bigger than threshold
 #' @export
-cx <- function(threshold = 1000)
-    ca(threshold) %>% subset(grepl('Expenses', note) & account != 'Expenses')
+cax <- function(threshold = 1000)
+    ca(threshold) %>% subset(grepl('Expenses', .$note) & .$account != 'Expenses')
 
 #' see fixed deposit instruments : absolutely bigger than threshold (default:1000)
 #' @export
-cf <- function() cs() %>% subset(grepl('type:(cd|ee|frn|tips|ibond|tbill|corp)', note))
+cf <- function() cs() %>% subset(grepl('type:(cd|ee|frn|tips|ibond|tbill|corp)', .$note))
 
 #' see fixed deposit instruments still locked up: absolutely bigger than threshold (default:1000)
 #' @export
-cl <- function() cf() %>% dplyr::mutate(edate = sub('.*matdate:(.*?) .*', '\\1', note)) %>% subset(as.Date(edate) > today & date <= today & grepl('start ', note) & amount > 0)
+cl <- function() cf() %>% dplyr::mutate(edate = sub('.*matdate:(.*?) .*', '\\1', .$note)) %>% subset(as.Date(.$edate) > today & date <= today & grepl('start ', .$note) & .$amount > 0)
 
 bfields <- function(iam) {
     imlets <- sort(unlist(strsplit(iam, '')))
@@ -563,7 +574,7 @@ pby <- function(X = cby(y), y = 'cbyval') {
     ## cb()  # brokerage entries
     ## cc()  # cash entries
     ## ca()  # balance adjustments
-    ## cx()  # xpense adjustments
+    ## cax()  # xpense adjustments
     ## cf()  # fixed instrument entries
 
   ## cby(au) ...
@@ -605,7 +616,7 @@ blocktest <- function(fil = 'passbook.example', n = 0) {
 ...costattach <- function(a, p) {
   a %>%
   plyr::ddply(c('units', 'account'), function(x) {
-    plx <- subset(p, units == x$units[1] & q_quote == FALSE)
+    p %>%  subset(., units == x$units[1] & q_quote == FALSE) -> plx
     hasp <- x$date %in% plx$date
     x$cost[hasp] <- plx$price[match(x$date, plx$date)[hasp]] * x$amount[hasp]
     x$cost[!hasp] <- 0
