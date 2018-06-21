@@ -2,10 +2,10 @@
 % Please edit documentation in R/myacc.R
 \name{ct}
 \alias{ct}
-\title{see tariff entries :  (Invest, Income, Interest, Tax, Trips, Expenses, Equity)}
+\title{see tariff entries :  (Tax, Trips, Expenses)}
 \usage{
 ct()
 }
 \description{
-see tariff entries :  (Invest, Income, Interest, Tax, Trips, Expenses, Equity)
+see tariff entries :  (Tax, Trips, Expenses)
 }

@@ -55,13 +55,16 @@ blocksprocess <- function(ff, verbose = FALSE) {
   seqs <- function(sdate, edate, intervals) {
     intervals <- gsub('-', ' ', intervals)
     stringi::stri_split_regex(intervals, ',') %>% unlist -> intervals
-    lapply(intervals,  seqdates, sdate = sdate, edate = edate) %>%
+    lapply(intervals,  seqdates, sdate = sdate, edate = edate) -> thedates
       #            identity -> a ; str(a) ; a %>%
-      "[["(., 1) %>%
-      #            identity -> a ; cat(a) ; a %>%
-      pmax(sdate) %>% pmin(edate) %>%
+      #            # here, unlist destroys the as.Date nature of the answers
+      lapply(thedates, as.character) %>% unlist %>% as.Date %>%
+      #            identity ->a ; cat(a) ; a %>%
+      pmax(sdate) %>%
+        pmin(edate) %>%
       c(sdate, edate) %>%
-      sort %>% unique
+      sort %>% unique -> thedates
+      return(thedates)
   }
 
   seqdates <- function(sdate, edate, interval) {
@@ -79,12 +82,18 @@ blocksprocess <- function(ff, verbose = FALSE) {
     if (sdate > edate)
       return(c(sdate, edate) + datesub)
 
-    if (interval == 'midmonth')
+    if (interval == 'midmonth') {
+#      str(list(sdate,edate))
+        sdate <- as.Date(lubridate::floor_date(sdate) + lubridate::days(14))
+#      str(list(sdate, edate))
       return(seq.Date(
-        lubridate::ceiling_date(sdate, 'month') + lubridate::days(14) - lubridate::month(1),
+        sdate,
+#        lubridate::ceiling_date(sdate, 'month') + lubridate::days(14) - lubridate::months(1),
+#        lubridate::ceiling_date(sdate, 'month') + lubridate::days(14) + lubridate::ddays(-30),
         edate,
         'month'
       ))
+    }
     #        str(list(sdate, edate, interval, datesub, seq.Date(sdate,edate,interval),
     #                 seq.Date(sdate,edate,interval)+datesub))
     return(seq.Date(sdate, edate, interval) + datesub)
@@ -157,6 +166,12 @@ blocksprocess <- function(ff, verbose = FALSE) {
         interval = '>6-months<',
         punits = 'ibond_@_1',
         post_from = 'Income:Interest:ibond'
+      ),
+      eebond   = list(
+        interval = '6-months',
+        punits = 'eebond_@_1',
+        post_from = 'Income:Interest:ebond',
+        rate = 4.0
       ),
       corp    = list(
         interval = '>6-months<',
@@ -290,8 +305,9 @@ blocksprocess <- function(ff, verbose = FALSE) {
 #                  cat('saw ',startdate,' ', matdate, ' interval = ', interval, '\n')
       dates     <- seqs(startdate, matdate, interval)
 
-      #            if (qdebug) str(list(startdate, matdate, interval, as.character(dates)))
       yfrac     <- as.numeric(diff(dates)) / 365.0
+
+#      if (compound == 'wages') print(list(length(yfrac), startdate, matdate, interval, dates, as.Date(dates), as.character(dates)))
 
       note <- paste0(note, ' id:', id)
 
@@ -335,6 +351,117 @@ blocksprocess <- function(ff, verbose = FALSE) {
                   tail(fprincipal, 1),
                  ' type:',
                  type)
+      } else if (compound == 'eebond') {
+          dates     <- seqs(startdate, matdate, interval)
+
+          loadtyields <- function(ytype) {
+              a <- readLines(paste0('treasuryrates/', ytype, '.yields'))
+              a <- a[a!='']
+              a <- a[grep('^ *#', a, invert = TRUE)]
+              a <- gsub(',|\t|%', '', a)
+              a
+          }
+
+        loadfr <- function() {
+          #a <- readLines('treasuryrates/eefr.yields')
+          #a <- a[a!= '']
+          #a <- gsub(',|\t|%', '', a)
+          a <- loadtyields('eefr')
+          data.frame(Date = a %>% strptime('%B %e %Y') %>% as.Date,
+                             rate = as.numeric(sub('.* ', '', a)))
+        }
+        loadsr <- function() {
+          #a <- readLines('treasuryrates/eesr.yields')
+          #a <- a[a!='']
+          #a <- gsub(',|\t|%', '', a)
+          a <- loadtyields('eesr')
+          data.frame(Date = a %>% strptime('%b %e %Y') %>% as.Date,
+                             rate = as.numeric(sub('.* ', '', a)))
+        }
+        loadmr <- function() {
+          #a <- readLines('treasuryrates/5y.yields')
+          #a <- a[a!='']
+          #a <- gsub(',|\t|%', '', a)
+          a <- loadtyields('5y')
+          data.frame(Date = a %>% strptime('%b %e %Y') %>% as.Date,
+                             rate = as.numeric(sub('.* ', '', a)))
+        }
+        mungerates <- function(alld, sdate) {
+          alld %<>% dplyr::arrange(Date)
+          tooearly <- alld$Date < sdate
+          toolate <- alld$Date > sdate
+          if (all(tooearly)) return(alld[rep(nrow(alld), 60),])
+          if (all(toolate)) warning('Rates to not start early enough\n')
+          todrop <- sum(tooearly)-1
+          if (todrop > 0) alld <- alld[-1:-todrop,, drop = FALSE]
+          if (nrow(alld) < 60) alld <- rbind(alld, alld[rep(nrow(alld), 60-nrow(alld)), ,drop = FALSE])
+          if (nrow(alld) > 60) alld <- alld[1:60,]
+          return(alld)
+        }
+
+        getftrates <- function(sdate) mungerates(loadfr(), sdate)[1:60, 'rate']
+        getstrates <- function(sdate) mungerates(loadsr(), sdate)[1:60, 'rate']
+        getltrates <- function(sdate) mungerates(loadmr(), sdate)[1:60, 'rate']
+
+        if (startdate < as.Date('1993-03-01')) {
+          g_rate <- c(0, rep(6, 24), rep(4, 36))
+          m_rate <- c(0, 0.85*getltrates(startdate))
+          minterest <- principal * cumprod(1 + m_rate/200)
+          ginterest <- principal * cumprod(1 + g_rate/200)
+            if (sum(minterest) > sum(ginterest))
+                interest <- minterest else interest <- ginterest
+        } else if (startdate < as.Date('1995-5-1')) {
+          g_rate <- c(0, rep(4, 60))
+          m_rate <- c(0, 0.85*getltrates(startdate))
+          minterest <- principal * cumprod(1 + m_rate/200)
+          ginterest <- principal * cumprod(1 + g_rate/200)
+            if (sum(minterest) > sum(ginterest))
+                interest <- minterest else interest <- ginterest
+        } else if (startdate < as.Date('1997-5-1')) {
+          m_rate <- rep(0, 61)
+          m_rate[2:11]  <- getstrates(startdate)[1:10]
+          m_rate[12:35] <- 0.85*getltrates(startdate)[11:34]
+          m_rate[36:61] <- 0.85*getltrates(startdate)[35:60]
+          interest <- principal * cumprod(1 + m_rate/200)
+          if (interest[35] < principal) {
+              interest[35] <- 2*principal
+              interest[36:61] <- 2*principal * cumprod(1 + m_rate[36:61]/200)
+          }
+        } else if (startdate < as.Date('2003-6-1')) {
+          m_rate <- c(0, 0.90 * getltrates(startdate))
+          interest <- principal * cumprod(1 + m_rate/200)
+          if (interest[35] < principal) {
+              interest[35] <- 2*principal
+              interest[36:61] <- 2*principal * cumprod(1 + m_rate[36:61]/200)
+          }
+        } else if (startdate <- as.Date('2005-5-1')) {
+          m_rate <- c(0, 0.90 * getltrates(startdate))
+          interest <- principal * cumprod(1 + m_rate/200)
+          if (interest[41] < principal) {
+              interest[41] <- 2*principal
+              interest[42:61] <- 2*principal * cumprod(1 + m_rate[42:61]/200)
+          }
+        } else {
+          m_rate <- c(0, getftrates(startdate))
+          interest <- principal * cumprod(1 + m_rate/200)
+          if (interest[41] < principal) {
+              interest[41] <- 2*principal
+              interest[42:61] <- 2*principal * cumprod(1 + m_rate[42:61]/200)
+          }
+        }
+
+        interest   <- round(diff(interest), 2)
+        fprincipal <- principal + sum(interest)
+        note <-
+          paste0(note,
+                 ' matdate:',
+                 matdate,
+                 ' principal:',
+                 principal,
+                 ' finalprincip:',
+                  tail(fprincipal, 1),
+                 ' type:',
+                 type)
       } else if (compound == 'tips') {
 
         actyear <- lubridate::year(startdate)
@@ -343,20 +470,27 @@ blocksprocess <- function(ff, verbose = FALSE) {
 
         sdates <- as.Date(paste0(actyear, c('-1-1','-2-1')))
 
-        aa <- pypq(outhome('/pyquotes'))
-        aatips <- subset(aa, units == 'tips')
-        aatips <- aatips[order(aatips$date),]
-        #srate <- c(NA, aatips$price)[1 + findInterval(startdate, aatips$date)]
-        srate <- c(NA, aatips$price)[1 + findInterval(sdates, aatips$date)]
-        srate <- mean(srate)
+        if (file.exists(outhome('/pyquotes'))) {
+          aa <- pypq(outhome('/pyquotes'))
+          aatips <- subset(aa, units == 'tips')
+          aatips <- aatips[order(aatips$date),]
+          #srate <- c(NA, aatips$price)[1 + findInterval(startdate, aatips$date)]
+          srate <- c(NA, aatips$price)[1 + findInterval(sdates, aatips$date)]
 
-        irate <- c(NA, aatips$price)[1 + findInterval(dates[-1], aatips$date)]
-        irateR <- c(NA, aatips$price)[1 + findInterval(lubridate::ceiling_date(dates[-1], 'month'), aatips$date)]
-        irate <- (irate + irateR)/2
+          irate <- c(NA, aatips$price)[1 + findInterval(dates[-1], aatips$date)]
+          irateR <- c(NA, aatips$price)[1 + findInterval(lubridate::ceiling_date(dates[-1], 'month'), aatips$date)]
+          #str(list(sdates,srate,irate,irateR,matdate,dates))
 
-        frate <-  c(NA, aatips$price)[1 + findInterval(matdate, aatips$date)]
+          srate <- mean(srate)
+          irate <- (irate + irateR)/2
+
+          frate <-  c(NA, aatips$price)[1 + findInterval(matdate, aatips$date)]
+        } else {
+          frate = srate = irate = -100.00
+        }
         if (frate < srate) frate <- srate
-        punits <- paste0('tips @@ ', discount)
+          punits <- paste0('tips @@ ', discount)
+      #    punits <- paste0('tips {', srate, '} @@ ', discount)
         principal <- round(principal / srate, 6)
         interest   <- round(principal * rate * irate / 2, 2)
         fprincipal <- principal

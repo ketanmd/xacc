@@ -2,15 +2,13 @@
 % Please edit documentation in R/myacc.R
 \name{pby}
 \alias{pby}
-\title{plot xpenses by category vs time}
+\title{smart plot of extracted data, pie charts, multi-panel plots}
 \usage{
-pby(X = cby(y), y = "cbyval")
+pby(...)
 }
 \arguments{
-\item{X}{transactions of interest}
-
-\item{y}{value to plot}
+\item{...}{arguments are passed to cby}
 }
 \description{
-plot xpenses by category vs time
+smart plot of extracted data, pie charts, multi-panel plots
 }

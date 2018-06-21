@@ -4,7 +4,7 @@
 \alias{upd}
 \title{update accounting info by reprocessing all input files}
 \usage{
-upd(reprocess = FALSE, verbose = TRUE)
+upd(reprocess = FALSE, verbose = FALSE)
 }
 \arguments{
 \item{reprocess}{reprocess files even if nothing changes}

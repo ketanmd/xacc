@@ -52,11 +52,10 @@ bigtext <- function(size = 24)
         header = TRUE,
         stringsAsFactors = FALSE,
         knownaccountsfile
-      )
-    kamap %>%  dplyr::mutate(.,
-      account = sub('.*?:', '', fullacc),
-      accat   = sub(':.*', '', account)
-    ) -> knownaccounts
+        )
+    kamap -> knownaccounts
+    knownaccounts$account <- sub('.*?:', '', knownaccounts$fullacc)
+    knownaccounts$accat   <- sub(':.*', '', knownaccounts$account)
   }
   function(party = NULL, field = NULL) {
     if (!file.exists(knownaccountsfile)) return(party)

@@ -7,9 +7,7 @@
 read.hsbc(csvf)
 }
 \arguments{
-\item{csvf}{csv file from hsbc to process
-MONEY FUND REDEMPTION',
-OUTGOING ACCOUNT TRANSFER FEE',}
+\item{csvf}{csv file from hsbc to process}
 }
 \description{
 process a csv file downloaded from hsbc

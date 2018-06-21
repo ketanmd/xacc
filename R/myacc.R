@@ -33,13 +33,16 @@ pyprx : all execution prices
 #' @export
 hs <- function() {
 message("today    : todays date
-iacc     : interesting accounts for selection
+iacc     : increase accounts
+oacc     : not interesting accounts for de-selection
+tacc     : tariffs accounts
 until    : selection upto and including date [today]
 since    : selection on and after date [today]
 now      : transactions before (0) and after(0) today
 acc      : select by account
 notacc   : deselect by account
-tunits  : select by units
+tunits   : select by units
+tacctype : select by acctype
 notunits : deselect by units
 ")
 }
@@ -49,17 +52,15 @@ notunits : deselect by units
 hc <- function() {
 message("std  : all transactions
 cs   : all     : std | xfields | until today
-ct   : tariffs : cs | acc(iacc)
-cb   : cs + notacc(iacc)
-cc   : cash          : cs | notacc(iacc) | tunits($)
-ci   : brokers       : cs | notacc(iacc) | notunits($)
+ct   : tariffs : cs | acc(tacc)
+cb   : cs + notacc(oacc)
+cc   : cash          : cs | notacc(oacc) | tunits($)
+ci   : brokers       : cs | notacc(oacc) | notunits($)
 ca   : adjustments   : cs | adj > thresh[1000]
 cax  : adjustments   : ca | expenses
 cf   : fixed         : cs | fixeddeposits
 cl   : locked up now : cf | matdate>date
 cby  : table(byf, c.[ci])
-p    : plot(c.[ci], bigfont[8])
-pby  : plot(byf, c.[ci], bigfont[8])
 ")
 }
 
@@ -85,7 +86,7 @@ supd <- function(reprocess = FALSE) suppressMessages(upd(reprocess, verbose = FA
 #' @param reprocess reprocess files even if nothing changes
 #' @param verbose turn on debugging output ?
 #' @export
-upd <- function(reprocess = FALSE, verbose = TRUE) {
+upd <- function(reprocess = FALSE, verbose = FALSE) {
   #############
 
   outfile <- outhome('/csv.passbook')
@@ -116,14 +117,15 @@ upd <- function(reprocess = FALSE, verbose = TRUE) {
       %>% grep('^P', ., value = TRUE)
       %>% grep(' q_', ., value = TRUE)
       %>% sub('\n\n', '', .)
-      %>% writeLines(., outhome('/pyquotes'))
-    )
+    ) -> pyqlines
+    unlink(outhome('/pyquotes'))
+    if (length(pyqlines)) writeLines(pyqlines, outhome('/pyquotes'))
   }
 
   cat('== Process blocks files ==\n')
   (union(blocksfiles, outfile)
     %>% grep('~$', . , value = TRUE, invert = TRUE)
-    %>% blocksprocess(.)
+    %>% blocksprocess(., verbose)
     %>% write(., outhome('/pyall'))
   )
 
@@ -192,7 +194,11 @@ pycsv <- function() {
 #' @return price lines as strings
 #' @export
 pypq <- function(pypfile) {
-  utils::read.table(pypfile, header = FALSE, stringsAsFactors = FALSE) %>%
+  message("loading info from ", pypfile, '\n')
+  if (!file.exists(pypfile)) return(NULL)
+    utils::read.table(pypfile, header = FALSE, stringsAsFactors = FALSE)  -> a
+    if (!length(a)) return(NULL)
+    a %>%
     stats::setNames(c(V1='foo', V2='date', V3 = 'units', V4 = 'price')) %>%
     rbind(., data.frame(foo = '', date = '1970-1-1', units = 'q_tbill', price = 1.0)) %>%
     dplyr::mutate(foo = NULL, date = as.Date(.cleandates(date)),
@@ -234,15 +240,35 @@ pyprx <- function() {
         #str(list(xprices, qprices, nprices))
     }
 
-    rbind(xprices, qprices[,names(xprices)]) %>%
+    if (!is.null(qprices))
+        rbind(xprices, qprices[,names(xprices)]) -> xprices
+    xprices %>%
         dplyr::arrange(units,date,q_quote)
+}
+
+#' assign cost to each transaction
+#' @param a transactions object
+#' @param p prices object
+#' @export
+costattach <- function(a, p) {
+  a %>%
+  plyr::ddply(c('units', 'account'), function(x) {
+    p %>%  subset(., units == x$units[1] & .$q_quote == FALSE) -> plx
+    hasp <- x$date %in% plx$date
+    x$cost[hasp] <- plx$price[match(x$date, plx$date)[hasp]] * x$amount[hasp]
+    x$cost[!hasp] <- 0
+    #subset(x, amount != 0 | round(cumsum(amount), 8) != 0) -> x
+    x
+  })
 }
 
 #' assign value to each transaction
 #' @param a transactions object
 #' @param p prices object
 valattach <- function(a, p) {
-  plyr::ddply(a, c('units', 'account'), function(x) {
+  a$note <- as.character(a$note)
+  a %>% costattach(p) %>%
+    plyr::ddply(., c('units', 'account'), function(x) {
     plq <- subset(p, units == x$units[1]) # & q_quote == TRUE)
     x <- dplyr::arrange(x, date)
 
@@ -256,6 +282,9 @@ valattach <- function(a, p) {
       xnew <- x[rep(1, sum(!olddates)), , drop = FALSE]
       xnew$date <- newdates[!olddates]
       xnew$amount <- 0
+      xnew$note <- 'price quote update'
+      xnew$cost <- 0
+      #str(list(x, xnew))
       x <- rbind(x, xnew)
       x <- dplyr::arrange(x, date)
     }
@@ -292,6 +321,17 @@ xfields <- function(a) {
                   acctype = fixacctype(fixaccount(.$account, .$units)))
 }
 
+#' list available note fields
+#' @export
+notes <- function() (std()$note
+    %>% as.character
+    %>% strsplit(., ' +')
+    %>% unlist
+    %>% grep(value = TRUE, ':', .)
+    %>% sub(':.*', '', .)
+    %>% sort
+    %>% unique)
+
 #' utility to extract note fields
 #' @param x object from which to extract notefield
 #' @param f name of notefield, should appear in the form f:<finfo> in the note
@@ -303,78 +343,70 @@ notefield <- function(x, f) {
     x
 }
 
+
+
 #' general aggregation function, should be applied directly to raw data
 #' @param a transactions object
 #' @param byfields grouping variables for aggregation
 sumt <- function(a, byfields = c('account', 'units')) {
     q_has_cost <- !is.null(a$cost)
     if (!q_has_cost) a$cost <- 0.0
-
+    #print(paste('summing and q_has_cost = ', q_has_cost, '\n'))
     (a %<>% identity
-      %>% dplyr::arrange(., .$date)
-      ## first, aggregate respecting units
-      %>% dplyr::group_by_at(., union('units', byfields))
-      %>% dplyr::summarize(.,
-                           amount = sum(amount),
-                           val = sum(val),
-                           lprice = dplyr::last(lprice),
-                           Date = dplyr::last(date),
-                           cost = sum(cost)
-      )
-      %>% dplyr::ungroup(.)
-      %>% dplyr::mutate(., date = .$Date, Date = NULL)
-      %>% subset(., round(.$amount, 4) != 0 |
-                   round(.$val, 4) != 0 |
-                   round(.$cost, 4) != 0)
-      ## second, aggregate across units
-      %>% dplyr::group_by_at(., byfields)
-      %>% dplyr::summarize(.,
-                           val = sum(val),
-                           Date = dplyr::last(date),
-                           cost = sum(cost))
-      %>% dplyr::ungroup(.)
-      ## compute cumulative quantities
-      %>% dplyr::arrange_(., c(byfields, 'val', intersect('acctype', names(a))))
-      %>% dplyr::mutate(.,
-                        date = .$Date,
-                        Date = NULL,
-                        cval = cumsum(.$val),
-                        ccost = cumsum(.$cost),
-                        cnet = cumsum(.$val) - cumsum(.$cost))
-      )
+        %>% dplyr::arrange(., .$date)
+        ## first, aggregate respecting units
+        %>% plyr::ddply(., union('units', byfields), function(x) {
+            with(x, {data.frame(amount = sum(x$amount),
+                               val = sum(x$val),
+                               lprice = dplyr::last(x$lprice),
+                               Date = dplyr::last(x$date),
+                               cost = sum(x$cost))})})
+        %>% dplyr::mutate(., date = .$Date, Date = NULL)
+        ## second, aggregate across units
+        %>% subset(., round(.$amount, 4) != 0 |
+                      round(.$val, 4) != 0 |
+                      round(.$cost, 4) != 0)
+        %>% plyr::ddply(., byfields, function(x) {
+            with(x, {data.frame(val = sum(x$val),
+                                Date = dplyr::last(x$date),
+                                cost = sum(x$cost))})})
+        ## compute cumulative quantities
+        %>% dplyr::arrange_(., c(byfields, 'val', intersect('acctype', names(a))))
+        %>% dplyr::mutate(.,
+                          date = .$Date,
+                          Date = NULL,
+                          cval = cumsum(.$val),
+                          ccost = cumsum(.$cost),
+                          cret = cumsum(.$val-.$cost)/cumsum(.$cost))
+    )
+
+    ## if both time and non-time fields are being kept,
+    ##   cumulate non-time fields distinctly as 'cbyval'
     tlike <- byfields %in% c('year','month','date')
     if (sum(tlike) > 0 && sum(tlike) != length(byfields)) {
-      (a %<>% identity
-         %>% dplyr::group_by_at(., setdiff(byfields, c('year','month','date')))
-         %>% dplyr::mutate(., cbyval = cumsum(.$val))
-         %>% dplyr::ungroup(.)
-      )
+        a %<>% plyr::ddply(., setdiff(byfields, c('year','month','date')),
+                           function(x) x %>% dplyr::mutate(., cbyval = cumsum(.$val),
+                                                           cbycost = cumsum(.$cost),
+                                                           cbyret = cumsum(.$val-.$cost)/cumsum(.$cost)
+                                                           )
+                           )
     }
 
     a <- .dig(a, 2)
 
-    if (!q_has_cost) a$cost <- NULL
+    if (!q_has_cost) {
+        a %<>% dplyr::mutate(cost = NULL,
+                             ccost = NULL,
+                             cret = NULL,
+                             cbycost = NULL,
+                             cbyret = NULL)
+    }
 
   if ('month' %in% byfields) a$date <- a$month
   if ('year' %in% byfields)  a$date <- a$year
-  dplyr::mutate(a, month = NULL, year = NULL, cnet = NULL, ccost = NULL)
+  dplyr::mutate(a, month = NULL, year = NULL)
 }
 
-#' compute cumulative statistics
-#'
-#' @param xa input data frame
-#' @param byfields comma separated string values
-xg <- function(xa, byfields) {
-  byfields <- sub('year|month', 'date', byfields)
-  xa %<>% dplyr::arrange_(c(byfields, 'val'))
-  if ('acctype' %in% names(xa))  xa %<>% dplyr::arrange(.$acctype)
-  xa %<>% dplyr::mutate(cval = cumsum(.$val))
-
-#  if ('place' %in% names(xa))
-#      xa %<>% dplyr::group_by(place) %>% dplyr::mutate(cpval = cumsum(val)) %>% dplyr::ungroup(.)
-  if ('cost' %in% names(xa)) xa <- dplyr::mutate(xa, ccost = cumsum(.$cost), cnet = .$cval-.$ccost)
-  .dig(xa, 2)
-}
 
 ##########################################################################################
 ##########################################################################################
@@ -385,7 +417,9 @@ xg <- function(xa, byfields) {
 today  <- Sys.Date()
 
 #' special accounts for selection
-iacc   <- 'Earnings|Invest|Income|Interest|Tax|Trips|Expenses|Equity'
+iacc   <- 'Earnings|Invest|Income|Interest'
+oacc   <- 'Earnings|Invest|Income|Interest|Tax|Trips|Expenses|Equity'
+tacc   <- 'Tax|Trips|Expenses'
 ############
 ## SELECTION
 
@@ -411,6 +445,13 @@ since  <- function(aca, b = lubridate::floor_date(today-10, 'year'))
 now <- function(aca, before = 0, after = 0)
   aca %>% since(today - before) %>% until(today + after)
 
+#' note selection
+#' @param aca transactions object
+#' @param a regular expression of note field to select
+#' @export
+note <- function(aca, a)
+    aca %>% subset(., grepl(a, .$note, ignore.case = TRUE))
+
 #' account selection
 #' @param aca transactions object
 #' @param a regular expression of accounts to select
@@ -427,19 +468,26 @@ notacc <-
     (!grepl(a, aca$account, ignore.case = TRUE)) %>%
     subset(aca, .)
 
-#' units selection
+#' acctype selection
 #' @param aca transactions object
-#' @param u regular expression of units to select
+#' @param u regular expression of acctype to select
 #' @export
-tunits  <- function(aca, u)
-  aca %>% subset(., grepl(u, units, ignore.case = TRUE))
+tacctype  <- function(aca, u)
+  aca %>% subset(., grepl(u, .$acctype, ignore.case = TRUE))
 
 #' units selection
 #' @param aca transactions object
 #' @param u regular expression of units to select
 #' @export
+tunits  <- function(aca, u)
+  aca %>% subset(., grepl(u, .$units, ignore.case = TRUE))
+
+#' units de-selection
+#' @param aca transactions object
+#' @param u regular expression of units to de-select
+#' @export
 notunits  <- function(aca, u)
-  subset(aca, !grepl(u, units, ignore.case = TRUE))
+  aca %>% subset(., !grepl(u, .$units, ignore.case = TRUE))
 
 ######################################################################################
 ######################################################################################
@@ -457,37 +505,37 @@ std   <- function(intrans = pycsv(), inprx = pyprx())
 cs <- function()
   std() %>% xfields %>% until
 
-#' see tariff entries :  (Invest, Income, Interest, Tax, Trips, Expenses, Equity)
+#' see tariff entries :  (Tax, Trips, Expenses)
 #' @export
 ct <- function()
-  cs() %>% acc(iacc)
+  cs() %>% acc(tacc)
 
 #' see both cash and investment entries : not 'bad' accounts and not interesting accounts
 #' @export
 cb <- function()
-  cs() %>% notacc(iacc)
+  cs() %>% notacc(oacc)
 
 #' see cash entries : all dollar unit positions
 #' @export
 cc <- function()
-  cs() %>% notacc(iacc) %>% tunits('\\$')
+  cs() %>% notacc(oacc) %>% tunits('\\$')
 
 #' see investment entries : (all but dollar unit position)
 #' @export
 ci <- function()
-    cs() %>% notacc(iacc) %>% notunits('\\$')
+    cs() %>% notacc(oacc) %>% notunits('\\$')
 
 #' see adjustment entries : absolutely bigger than threshold
 #' @param threshold only adjustments absolutely bigger than threshold
 #' @export
-ca <- function(threshold = 0)
-    cs() %>% subset(grepl('^balance', .$note) & abs(.$amount) > threshold)
+ca <- function(threshold = 1000, X = cs())
+    X %>% subset(grepl('^balance', .$note) & abs(.$amount) > threshold)
 
 #' see xpense entries : absolutely bigger than threshold (default:1000)
 #' @param threshold only expense adjustments bigger than threshold
 #' @export
-cax <- function(threshold = 1000)
-    ca(threshold) %>% subset(grepl('Expenses', .$note) & .$account != 'Expenses')
+cax <- function(...)
+    ca(...) %>% subset(grepl('Expenses', .$note) & .$account != 'Expenses')
 
 #' see fixed deposit instruments : absolutely bigger than threshold (default:1000)
 #' @export
@@ -518,34 +566,32 @@ bfields <- function(iam) {
 cby <- function(byf, X = cb()) {
     byf <- deparse(substitute(byf))
     byf <- bfields(byf)
-    X %>% sumt(byf) # %>% xg(byf)
+    X %<>% sumt(byf)
+    attr(X, 'byfields') <- byf
+    X
 }
 
-#' plot xpenses by category vs time
-#' @importFrom ggplot2 aes
-#' @param X transactions of interest
-#' @param y value to plot
-#' @param bigfont font size
-#'
+#' smart plot of extracted data, pie charts, multi-panel plots
+#' @import ggplot2
+#' @param ...  arguments are passed to cby
 #' @export
-p <- function(X = cby(y), y = 'cval', bigfont = 8) {
-    (ggplot2::ggplot(X, ggplot2::aes_string(x = 'as.Date(date)', y = as.name(y)))
-        + ggplot2::geom_point()
-        + ggplot2::geom_line(linetype = 3)
-        + bigtext(bigfont))
-}
-
-#' plot xpenses by category vs time
-#' @importFrom ggplot2 aes
-#' @param X transactions of interest
-#' @param y value to plot
-#'
-#' @export
-pby <- function(X = cby(y), y = 'cbyval') {
-    (ggplot2::ggplot(X, ggplot2::aes_string(x = 'as.Date(date)', y = as.name(y)))
-        + ggplot2::geom_point()
-        + ggplot2::geom_line(linetype = 3)
-        )
+pby <- function(...) {
+  X <- cby(...)
+  byf <- attr(X, 'byfields')
+  timetypes <- c('date','month','year')
+  if (!any(timetypes %in% byf)) {
+    gvar <- setdiff(names(X), c('date','val', 'cval','cost','ccost','cret'))
+    graphics::pie(X$val, interaction(subset(X, , gvar)))
+  } else {
+    if (all(byf %in% timetypes)) {
+      (ggplot(X, aes(x = date, y = cval))
+       + geom_point() + geom_line())
+    } else {
+      (ggplot(X, aes(x = date, y = cbyval))
+       + geom_point() + geom_line()
+       + facet_wrap(as.formula(paste('~ ', paste(collapse = '+', setdiff(byf, timetypes))))))
+    }
+  }
 }
 
 #####################################################
@@ -600,29 +646,3 @@ blocktest <- function(fil = 'passbook.example', n = 0) {
   if (n != 0) fil <- findcsvfiles()[n]
   blocksprocess(fil)
 }
-
-#####################
-#####################
-## obsolete
-
-
-#############################################################################
-#############################################################################
-## fixed utility functions
-
-# #' assign value to each transaction
-# #' @param a transactions object
-# #' @param p prices object
-...costattach <- function(a, p) {
-  a %>%
-  plyr::ddply(c('units', 'account'), function(x) {
-    p %>%  subset(., units == x$units[1] & q_quote == FALSE) -> plx
-    hasp <- x$date %in% plx$date
-    x$cost[hasp] <- plx$price[match(x$date, plx$date)[hasp]] * x$amount[hasp]
-    x$cost[!hasp] <- 0
-    #subset(x, amount != 0 | round(cumsum(amount), 8) != 0) -> x
-    x
-  })
-}
-
-
