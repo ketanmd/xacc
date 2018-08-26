@@ -4,7 +4,7 @@
 \alias{cby}
 \title{std utility to see various views of accounts}
 \usage{
-cby(byf, X = cb())
+cby(byf, X = std() \%>\% gacc)
 }
 \arguments{
 \item{byf}{encoding of by fields}

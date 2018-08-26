@@ -1,7 +1,7 @@
 Package: xacc
 Type: Package
 Title: Extended approximate accounting
-Version: 1.0.000
+Version: 1.1.000
 Author: Ketan Did It.
 Maintainer: Ketan <ketanmd@gmail.com>
 Description: Extend ledger CLI accounting with preprocessing of single-line records of single and multiple event.
@@ -11,10 +11,14 @@ Imports:
   lubridate,
   plyr,
   stringi,
-  stringr
+  stringr,
+  tidyr,
+  tibble
 Depends:
-  magrittr
+  magrittr,
+  gestalt,
+  readr
 License: GPL-3
 LazyData: TRUE
-RoxygenNote: 6.0.1
+RoxygenNote: 6.1.0
 SystemRequirements: ledger

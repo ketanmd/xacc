@@ -1,22 +1,25 @@
-#' process files, extract blocks, expand input blocks as needed
-#' returns blocks ready for ledger
-#' @param ff character vector of files to process
-#' @param verbose turn on messages (default = FALSE)
-#' @importFrom magrittr '%>%'
-#'
-blocksprocess <- function(ff, verbose = FALSE) {
-  knowf = .knowf()
 
-  loadone <- function(g) {
+#knowf = .knowf()
+
+loadone <- function(g) {
+    message('.', appendLF = FALSE)
     message('Reading lines into blocks from ', g, '\n')
+    ## remove poorly printing characters
     a <- readLines(g, warn = FALSE) %>% sub('\\\xae', '', .)
+    ## remove unintersting lines
     a[grep('^(;|\\s*$|#||\\*)', a, invert = TRUE)] -> a1
-    message('Found ', length(a1), ' lines from file ', g, '\n')
-    if (!length(a1))
+    #message('Found ', length(a1), ' lines from file ', g, '\n')
+    if (!length(a1)) {
+      warning('Found NO lines from file ', ff)
       return(list())
+    }
+    ## identify block beginnings, lines not beginning with a space
     a1b <- grep ('^ ', a1, invert = TRUE)
+    ## identify block endings
     a1e <- c(a1b[-1] - 1, length(a1))
+    ## make a dataframe with the beginnings and ends
     adf <- data.frame(b = a1b, e = a1e)
+    ## make a list of blocks
     plyr::alply(adf, .margins = 1, function(x)
       a1[x$b:x$e]) %>% unname
   }
@@ -100,6 +103,11 @@ blocksprocess <- function(ff, verbose = FALSE) {
   }
 
   postone <- function(b, verbose = FALSE) {
+    knowf <- .knowf()
+    if (!tibble::is.tibble(b)) b <- tibble(lines = b)
+
+    b <- unlist(use.names = FALSE, b)
+
     if (!grepl('type:', b[1])) {
       if (length(b) > 1) {
         for (lb in 2:length(b)) {
@@ -144,6 +152,8 @@ blocksprocess <- function(ff, verbose = FALSE) {
       ),
       cd      = list(
         interval = '>quarter<',
+        punits = 'CD_@_1',
+        iunits = 'CD_@_1',
         post_from = 'Income:Interest:cd'
       ),
       tbill   = list(
@@ -352,97 +362,70 @@ blocksprocess <- function(ff, verbose = FALSE) {
                  ' type:',
                  type)
       } else if (compound == 'eebond') {
-          dates     <- seqs(startdate, matdate, interval)
+        dates     <- seqs(startdate, matdate, interval)
 
-          loadtyields <- function(ytype) {
-              a <- readLines(paste0('treasuryrates/', ytype, '.yields'))
-              a <- a[a!='']
-              a <- a[grep('^ *#', a, invert = TRUE)]
-              a <- gsub(',|\t|%', '', a)
-              a
-          }
+        loadyields <- function() {
+          a <- read.table('passbooks/yields',
+                          stringsAsFactors = FALSE,
+                          header = TRUE)
+          a$Date <- as.Date(strptime(a$Date, '%Y%m%d'))
+          a
+        }
+        tyields <- loadyields()
 
-        loadfr <- function() {
-          #a <- readLines('treasuryrates/eefr.yields')
-          #a <- a[a!= '']
-          #a <- gsub(',|\t|%', '', a)
-          a <- loadtyields('eefr')
-          data.frame(Date = a %>% strptime('%B %e %Y') %>% as.Date,
-                             rate = as.numeric(sub('.* ', '', a)))
-        }
-        loadsr <- function() {
-          #a <- readLines('treasuryrates/eesr.yields')
-          #a <- a[a!='']
-          #a <- gsub(',|\t|%', '', a)
-          a <- loadtyields('eesr')
-          data.frame(Date = a %>% strptime('%b %e %Y') %>% as.Date,
-                             rate = as.numeric(sub('.* ', '', a)))
-        }
-        loadmr <- function() {
-          #a <- readLines('treasuryrates/5y.yields')
-          #a <- a[a!='']
-          #a <- gsub(',|\t|%', '', a)
-          a <- loadtyields('5y')
-          data.frame(Date = a %>% strptime('%b %e %Y') %>% as.Date,
-                             rate = as.numeric(sub('.* ', '', a)))
-        }
-        mungerates <- function(alld, sdate) {
-          alld %<>% dplyr::arrange(Date)
+        mungerates <- function(alld, qty, sdate) {
+          alld %<>% subset(qty == qty) %>% dplyr::arrange(Date)
           tooearly <- alld$Date < sdate
           toolate <- alld$Date > sdate
-          if (all(tooearly)) return(alld[rep(nrow(alld), 60),])
+          if (all(tooearly)) return(alld[rep(nrow(alld), 60), 'rate'])
           if (all(toolate)) warning('Rates to not start early enough\n')
           todrop <- sum(tooearly)-1
           if (todrop > 0) alld <- alld[-1:-todrop,, drop = FALSE]
           if (nrow(alld) < 60) alld <- rbind(alld, alld[rep(nrow(alld), 60-nrow(alld)), ,drop = FALSE])
           if (nrow(alld) > 60) alld <- alld[1:60,]
-          return(alld)
+          return(alld[1:60, 'rate'])
         }
 
-        getftrates <- function(sdate) mungerates(loadfr(), sdate)[1:60, 'rate']
-        getstrates <- function(sdate) mungerates(loadsr(), sdate)[1:60, 'rate']
-        getltrates <- function(sdate) mungerates(loadmr(), sdate)[1:60, 'rate']
 
         if (startdate < as.Date('1993-03-01')) {
           g_rate <- c(0, rep(6, 24), rep(4, 36))
-          m_rate <- c(0, 0.85*getltrates(startdate))
+          m_rate <- c(0, 0.85*mungerates(tyields, '5yyield', startdate))
           minterest <- principal * cumprod(1 + m_rate/200)
           ginterest <- principal * cumprod(1 + g_rate/200)
             if (sum(minterest) > sum(ginterest))
                 interest <- minterest else interest <- ginterest
         } else if (startdate < as.Date('1995-5-1')) {
           g_rate <- c(0, rep(4, 60))
-          m_rate <- c(0, 0.85*getltrates(startdate))
+          m_rate <- c(0, 0.85*mungerates(tyields, '5yyield', startdate))
           minterest <- principal * cumprod(1 + m_rate/200)
           ginterest <- principal * cumprod(1 + g_rate/200)
             if (sum(minterest) > sum(ginterest))
                 interest <- minterest else interest <- ginterest
         } else if (startdate < as.Date('1997-5-1')) {
           m_rate <- rep(0, 61)
-          m_rate[2:11]  <- getstrates(startdate)[1:10]
-          m_rate[12:35] <- 0.85*getltrates(startdate)[11:34]
-          m_rate[36:61] <- 0.85*getltrates(startdate)[35:60]
+          m_rate[2:11]  <-      mungerates(tyields, 'eesrate', startdate)[1:10]
+          m_rate[12:61] <- 0.85*mungerates(tyields, '5yyield', startdate)[11:60]
           interest <- principal * cumprod(1 + m_rate/200)
           if (interest[35] < principal) {
               interest[35] <- 2*principal
               interest[36:61] <- 2*principal * cumprod(1 + m_rate[36:61]/200)
           }
         } else if (startdate < as.Date('2003-6-1')) {
-          m_rate <- c(0, 0.90 * getltrates(startdate))
+          m_rate <- c(0, 0.90 * mungerates(tyields, '5yyield', startdate))
           interest <- principal * cumprod(1 + m_rate/200)
           if (interest[35] < principal) {
               interest[35] <- 2*principal
               interest[36:61] <- 2*principal * cumprod(1 + m_rate[36:61]/200)
           }
         } else if (startdate <- as.Date('2005-5-1')) {
-          m_rate <- c(0, 0.90 * getltrates(startdate))
+          m_rate <- c(0, 0.90 * mungerates(tyields, '5yyield', startdate))
           interest <- principal * cumprod(1 + m_rate/200)
           if (interest[41] < principal) {
               interest[41] <- 2*principal
               interest[42:61] <- 2*principal * cumprod(1 + m_rate[42:61]/200)
           }
         } else {
-          m_rate <- c(0, getftrates(startdate))
+          m_rate <- c(0, mungerates(tyields, 'eefrate', startdate))
           interest <- principal * cumprod(1 + m_rate/200)
           if (interest[41] < principal) {
               interest[41] <- 2*principal
@@ -653,12 +636,68 @@ blocksprocess <- function(ff, verbose = FALSE) {
     a[order(line1key(a, verbose))]
   }
 
-  message('loading blocks from ', ff)
+  # newloadone <- function(g) {
+  #   a <- readLines(g, warn = FALSE) %>% sub('\\\xae', '', .)
+  #   a[grep('^(;|\\s*$|#||\\*)', a, invert = TRUE)] -> a1
+  #   if (!length(a1)) {
+  #     warning('Found NO lines from file ', ff)
+  #     return(list())
+  #   }
+  #
+  #   ## move balance lines to end
+  #   balancelines <- grepl(' bal:', a1)
+  #   a1 <- c(a1[!balancelines], a1[balancelines])
+  #
+  #   bbegins = grep ('^ ', a1, invert = TRUE)
+  #   blengths = diff(c(bbegins, length(a1)+1))
+  #
+  #   fixfirst <- {
+  #       sub('^P +([^ ]+) +([^ ]+) +([^ ]+)', '\\1 type:price ticker:\\2 price:\\3', .) %>>>%
+  #           sub(' move:', ' type:move  move:', .) %>>>%
+  #           sub('^([^ ]+) +bal:([^ ]+) +== *', '\\1 type:assert to:\\2 ', .) %>>>%
+  #           sub('^([^ ]+) +bal:([^ ]+) += *',  '\\1 type:balance to:\\2 ', .) %>>>%
+  #        #   sub('^(\\d.*?) .*', '\\1', .) %>>>%
+  #           {tibble(data = .)} %>>>%
+  #           tidyr::separate(., data, c('date', 'rest'), extra = 'merge', sep = ' ') %>>>%
+  #           glimpse %>>>%
+  #           dplyr::mutate(., date = !!.cleandates(date)) %>>>%
+  #           glimpse %>>>%
+  #           tidyr::unite(., sep = ' ') %>>>% unlist(., use.names = FALSE)
+  #   }
+  #
+  #   a1[bbegins] %<>% fixfirst
+  #
+  #   tibble(lines = a1, file = g, id = rep(bbegins, blengths)) %>%
+  #       group_by(., file, id) %>%
+  #       tidyr::nest(.)
+  # }
+
+#' process files, extract blocks, expand input blocks as needed
+#' returns blocks ready for ledger
+#' @param ff character vector of files to process
+#' @param verbose turn on messages (default = FALSE)
+#' @importFrom magrittr '%>%'
+#'
+blocksprocess <- function(ff, verbose = FALSE) {
+
+
+ message('loading blocks from ', length(ff), ' files:')
   ff <- plyr::llply(ff, loadone)
   ff <- unlist(ff, recursive = FALSE, use.names = FALSE)
   ff <- prepost(ff)
   ff <- plyr::llply(ff, postone)
   ff <- unlist(ff)
   ff <- blocksmsort(ff, verbose)
+  message('\n')
+
   ff
 }
+
+# newblocksprocess <- function() {
+#     g <- '/home/family/money/accounting/passbooks/2015.passbook'
+#     g %>% lapply(newloadone) %>%
+#         bind_rows %>% rowwise %>%
+#             dplyr::mutate(data = postone(data))
+#   }
+#
+

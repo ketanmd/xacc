@@ -50,20 +50,24 @@ notunits : deselect by units
 #' Transaction extraction hints
 #' @export
 hc <- function() {
-message("std  : all transactions
-cs   : all     : std | xfields | until today
-ct   : tariffs : cs | acc(tacc)
-cb   : cs + notacc(oacc)
-cc   : cash          : cs | notacc(oacc) | tunits($)
-ci   : brokers       : cs | notacc(oacc) | notunits($)
-ca   : adjustments   : cs | adj > thresh[1000]
-cax  : adjustments   : ca | expenses
-cf   : fixed         : cs | fixeddeposits
-cl   : locked up now : cf | matdate>date
-cby  : table(byf, c.[ci])
+message("
+std  : all transactions | xfields | until | as_tibble
+
+  filters:
+  gacc : good accounts   ( Cash Broker Bonds Ren Retire )
+  tacc : tariff accounts ( Tax Trips Expenses Equity Sink Family )
+  iacc : income accounts ( Earnings Invest Income Interest )
+  dollars : $ units
+  bale : balance note entries
+  bige : amount > threshold(1000)
+  expe : expense note entries
+  fixe : fixed deposit entries
+  locke : locked up fixed deposit entries
+
+  cby(X, byf) : summarized data
+  pbyf(...)   : plot of cby output
 ")
 }
-
 
 #' check if any accounting info has changed
 #' @export
@@ -85,6 +89,7 @@ supd <- function(reprocess = FALSE) suppressMessages(upd(reprocess, verbose = FA
 #' update accounting info by reprocessing all input files
 #' @param reprocess reprocess files even if nothing changes
 #' @param verbose turn on debugging output ?
+#' @import readr
 #' @export
 upd <- function(reprocess = FALSE, verbose = FALSE) {
   #############
@@ -122,30 +127,38 @@ upd <- function(reprocess = FALSE, verbose = FALSE) {
     if (length(pyqlines)) writeLines(pyqlines, outhome('/pyquotes'))
   }
 
-  cat('== Process blocks files ==\n')
+  message('== Process blocks files ==')
   (union(blocksfiles, outfile)
     %>% grep('~$', . , value = TRUE, invert = TRUE)
     %>% blocksprocess(., verbose)
     %>% write(., outhome('/pyall'))
   )
 
-  cat('== Generating pycsv ==\n')
-  system2(
-    ledgercmd(),
-    args = ' csv -f - ',
-    stdin  = outhome('/pyall'),
-    stdout = outhome('/pycsv')
-  )
+  message('== Checking pyall for inconsistencies ==')
+  suppressWarnings(emesses <-
+                       system2(ledgercmd(), args = ' source -f - ',
+                               stdin = outhome('/pyall'), stdout = TRUE, stderr = TRUE) )
+  if (length(emesses) > 0) {
+      erroringlines <- readr::parse_number(emesses[seq(1, length(emesses), 5)])
+      print(list(emesses,
+               emesses[seq(1, length(emesses), 5)],
+               erroringlines
+               ))
+      lapply(erroringlines, pyall) -> emesslist
+      message(paste(erroringlines, ':\n ',
+                    unlist(emesslist), '\n',
+                    emesses[4+seq(1, length(emesses), 5)], '\n'))
+  }
 
-  cat('== Generating pyprx ==\n')
-  system2(
-    ledgercmd(),
-    args = ' prices -f - ',
-    stdin  = outhome('/pyall'),
-    stdout = outhome('/pyprx')
-  )
+  message('== Generating pycsv ==')
+  system2(ledgercmd(), args = ' csv -f - ',
+          stdin  = outhome('/pyall'), stderr = FALSE, stdout = outhome('/pycsv') )
 
-  cat('== Write pyprq ==\n')
+  message('== Generating pyprx ==')
+  system2(ledgercmd(), args = ' prices -f - ',
+          stdin  = outhome('/pyall'), stderr = FALSE, stdout = outhome('/pyprx') )
+
+  message('== Write pyprq ==')
   system(paste(
     'cat ', outhome('/pyall'),
     ' | egrep "^P" ',
@@ -162,15 +175,21 @@ upd <- function(reprocess = FALSE, verbose = FALSE) {
 #'
 #' @return transactions lines as strings invisibly
 #' @param pos which line is of interest (usually for debugging)
-#' @param n how many lines around pos to be displayed
 #' @export
-pyall <- function(pos = 0, n = 5) {
+pyall <- function(pos = 0) {
   outhome('/pyall') %>%
   readLines %>%
   paste0('\n') -> pyout
-  pinds <- pos + (-n/2):(n/2)
-  if (pos != 0) return(cat(paste0(pinds, ' ', pyout[pinds]) ))
-  invisible(pyout)
+  bn <- -30
+  en <- 30
+  pinds <- pos + bn:en
+  if (pos == 0) return(invisible(pyout))
+
+  bn <- -min(match('\n', pyout[pos + -1:bn]))
+  en <- min(match('\n', pyout[pos + 1:en]))
+  pinds <- paste0('  ', pyout[pos + bn:en])
+  pinds[1-bn] <- paste0('>>', pyout[pos])
+  return( paste0(pinds, collapse = '') )
 }
 
 #' for debugging and for internal use return all transactions as csv lines
@@ -192,9 +211,11 @@ pycsv <- function() {
 #' return all price lines
 #' @param pypfile file containing all price quotes  pyquotes file
 #' @return price lines as strings
+#' @import dplyr
 #' @export
 pypq <- function(pypfile) {
-  message("loading info from ", pypfile, '\n')
+  message('-', appendLF = FALSE)
+  #message("loading info from ", pypfile, '\n')
   if (!file.exists(pypfile)) return(NULL)
     utils::read.table(pypfile, header = FALSE, stringsAsFactors = FALSE)  -> a
     if (!length(a)) return(NULL)
@@ -208,6 +229,7 @@ pypq <- function(pypfile) {
 #' return all price lines
 #'
 #' @return price lines as strings
+#' @import dplyr
 #' @export
 pyprx <- function() {
     utils::read.table(outhome('/pyprx'), header = FALSE, stringsAsFactors = FALSE) %>%
@@ -247,6 +269,7 @@ pyprx <- function() {
 }
 
 #' assign cost to each transaction
+#' @import plyr
 #' @param a transactions object
 #' @param p prices object
 #' @export
@@ -263,6 +286,7 @@ costattach <- function(a, p) {
 }
 
 #' assign value to each transaction
+#' @import dplyr
 #' @param a transactions object
 #' @param p prices object
 valattach <- function(a, p) {
@@ -297,25 +321,26 @@ valattach <- function(a, p) {
 
 xfields <- function(a) {
   fixaccount <- function(account,units) {
-    account %<>%
+    account %>%
       as.character %>%
-      sub('Cash:((SCTY|UST):.*|.*:(cd|fixed))',
-                  'Bonds:\\1', .) %>%
-      ifelse(grepl('^B_', units),
-             sub('.*?:(.*)', 'Bonds:\\1', .), .)
-    runits <-grep('med|rtc|rida|ridge', units)
-    account[runits] <- sub('.*?:(.*)', 'Ren:\\1', account[runits])
-    as.factor(account)
+      sub('Cash:(SCTY:.*|.*:cd|.*:fixed)', 'Bonds:\\1', .) %>%
+      ifelse(grepl('^B_|eebond|tips|ibond|frn', units),
+             sub('.*?:(.*)', 'Bonds:\\1', .),
+             .) %>%
+      ifelse(grepl('med|rtc|rida|ridge', units),
+             sub('.*?:(.*)', 'Ren:\\1', .),
+             .) %>%
+      as.factor(.)
   }
   fixacctype <- function(account)
     factor(sub(':.*', '', account),
-           levels = qw('Cash,Broker,Bonds,Ren,Retire,Earnings,Income,Interest,Tax,Trips,Expenses,Equity'),
+           levels = qw('Cash,Broker,Bonds,Ren,Retire,Equity,Earnings,Income,Interest,Tax,Trips,Expenses,Sink,Family'),
            ordered = TRUE)
 
   a %>%
     dplyr::mutate(.,
-                  month   = lubridate::ceiling_date(date, 'month') + lubridate::days(-1),
-                  year    = lubridate::ceiling_date(date, 'year')  + lubridate::days(-1),
+#                  month   = lubridate::ceiling_date(date, 'month') + lubridate::days(-1),
+#                  year    = lubridate::ceiling_date(date, 'year')  + lubridate::days(-1),
                   account = fixaccount(.$account,.$units),
                   place   = sub('(.*?:.*?):.*', '\\1', fixaccount(.$account, .$units)),
                   acctype = fixacctype(fixaccount(.$account, .$units)))
@@ -336,77 +361,83 @@ notes <- function() (std()$note
 #' @param x object from which to extract notefield
 #' @param f name of notefield, should appear in the form f:<finfo> in the note
 #' @export
-notefield <- function(x, f) {
+fromnote <- function(x, f) {
     fname <- deparse(substitute(f))
     x %<>% subset(., grepl(paste0(' ', fname, ':'), .$note))
-    x[[fname]] <- sub(paste0('.* ',fname,':(.*?) .*'), '\\1', x$note)
+    x[[paste0('note.',fname)]] <-
+        sub(paste0('.* ',fname,':(.*?) .*'), '\\1', x$note)
     x
 }
-
-
 
 #' general aggregation function, should be applied directly to raw data
 #' @param a transactions object
 #' @param byfields grouping variables for aggregation
+#' @import gestalt
+#' @import dplyr
+#' @import tibble
+#' @import tidyr
+#' @import readr
 sumt <- function(a, byfields = c('account', 'units')) {
-    q_has_cost <- !is.null(a$cost)
-    if (!q_has_cost) a$cost <- 0.0
-    #print(paste('summing and q_has_cost = ', q_has_cost, '\n'))
-    (a %<>% identity
-        %>% dplyr::arrange(., .$date)
-        ## first, aggregate respecting units
-        %>% plyr::ddply(., union('units', byfields), function(x) {
-            with(x, {data.frame(amount = sum(x$amount),
-                               val = sum(x$val),
-                               lprice = dplyr::last(x$lprice),
-                               Date = dplyr::last(x$date),
-                               cost = sum(x$cost))})})
-        %>% dplyr::mutate(., date = .$Date, Date = NULL)
-        ## second, aggregate across units
-        %>% subset(., round(.$amount, 4) != 0 |
-                      round(.$val, 4) != 0 |
-                      round(.$cost, 4) != 0)
-        %>% plyr::ddply(., byfields, function(x) {
-            with(x, {data.frame(val = sum(x$val),
-                                Date = dplyr::last(x$date),
-                                cost = sum(x$cost))})})
-        ## compute cumulative quantities
-        %>% dplyr::arrange_(., c(byfields, 'val', intersect('acctype', names(a))))
-        %>% dplyr::mutate(.,
-                          date = .$Date,
-                          Date = NULL,
-                          cval = cumsum(.$val),
-                          ccost = cumsum(.$cost),
-                          cret = cumsum(.$val-.$cost)/cumsum(.$cost))
-    )
+  q_sync    <- 'sync' %in% byfields
+  byfields  <- setdiff(byfields, 'sync')
+  timetypes <- c('date','month','year')
+  ntf       <- setdiff(byfields, timetypes)
+  tf        <- intersect(byfields, timetypes)
+  valf <- c('val', 'amount', 'lprice', 'cost')
 
-    ## if both time and non-time fields are being kept,
-    ##   cumulate non-time fields distinctly as 'cbyval'
-    tlike <- byfields %in% c('year','month','date')
-    if (sum(tlike) > 0 && sum(tlike) != length(byfields)) {
-        a %<>% plyr::ddply(., setdiff(byfields, c('year','month','date')),
-                           function(x) x %>% dplyr::mutate(., cbyval = cumsum(.$val),
-                                                           cbycost = cumsum(.$cost),
-                                                           cbyret = cumsum(.$val-.$cost)/cumsum(.$cost)
-                                                           )
-                           )
-    }
+  aatbl <- tibble::as.tibble(matrix(rep(0, length(valf)), 1, length(valf)))
+  names(aatbl) <- valf
 
-    a <- .dig(a, 2)
+  if ('month' %in% tf) a <- dplyr::mutate(a, month = lubridate::ceiling_date(date, 'month') + lubridate::days(-1))
+  if ('year' %in% tf)  a <- dplyr::mutate(a, year  = lubridate::ceiling_date(date, 'year')  + lubridate::days(-1))
 
-    if (!q_has_cost) {
-        a %<>% dplyr::mutate(cost = NULL,
-                             ccost = NULL,
-                             cret = NULL,
-                             cbycost = NULL,
-                             cbyret = NULL)
-    }
+  mf <-
+    pre: (
+      totibble : tibble::as.tibble %>>>%
+      dplyr::mutate(Date = date) %>>>%
+      dplyr::group_by_at(!!c(byfields, 'units')) %>>>%
+      dplyr::arrange(Date) %>>>%
 
-  if ('month' %in% byfields) a$date <- a$month
-  if ('year' %in% byfields)  a$date <- a$year
-  dplyr::mutate(a, month = NULL, year = NULL)
+      dplyr::summarize(val    = sum(val),
+                       amount = sum(amount),
+                       cost   = sum(cost),
+                       lprice = dplyr::last(lprice)) %>>>%
+
+      dropzeros : dplyr::filter(round(amount, 4) != 0 | round(val, 4) != 0) %>>>%
+
+      dplyr::group_by_at(!!byfields) %>>>%
+      dplyr::summarize(val    = sum(val),
+                       amount = sum(amount),
+                       cost   = sum(cost),
+                       lprice = dplyr::last(lprice)) %>>>%
+      dplyr::select(c(tf, ntf, valf)) # 'val'))
+      ) %>>>%
+
+    proc: (
+      tidyr::unite(gfac, !!ntf, sep = '+') %>>>%
+      dplyr::ungroup %>>>%
+      syncdates: tidyr::complete_(c(tf, 'gfac'), fill = aatbl) %>>>%
+
+      cumulate : (dplyr::group_by(gfac) %>>>%
+                  dplyr::arrange_(tf) %>>>%
+                  dplyr::mutate(cval = cumsum(val)) %>>>%
+                  dplyr::ungroup) %>>>%
+
+      tidyr::separate(gfac, sep = '\\+', into = ntf)
+      ) %>>>%
+    post: (
+        dplyr::mutate_if(is.numeric, fn(x ~ round(x, 2))) %>>>%
+        dplyr::arrange_(c(tf, ntf))
+      )
+
+  if (!q_sync) mf$proc$syncdates <- identity
+  if (!length(tf)) mf$proc <- identity
+
+  a <- mf(a)
+  attr(a, 'byfields') <- byfields
+  attr(a, 'q_sync')   <- q_sync
+  a
 }
-
 
 ##########################################################################################
 ##########################################################################################
@@ -416,10 +447,6 @@ sumt <- function(a, byfields = c('account', 'units')) {
 #' @export
 today  <- Sys.Date()
 
-#' special accounts for selection
-iacc   <- 'Earnings|Invest|Income|Interest'
-oacc   <- 'Earnings|Invest|Income|Interest|Tax|Trips|Expenses|Equity'
-tacc   <- 'Tax|Trips|Expenses'
 ############
 ## SELECTION
 
@@ -427,15 +454,23 @@ tacc   <- 'Tax|Trips|Expenses'
 #' @param aca transactions object
 #' @param e date as a string
 #' @export
-until  <- function(aca, e = today)
-  subset(aca, date <= as.Date(e))
+until  <- function(aca, e = today) {
+  if ('date'  %in% names(aca)) return(subset(aca, date <= as.Date(e)))
+  if ('month' %in% names(aca)) return(subset(aca, month <= as.Date(e)))
+  if ('year'  %in% names(aca)) return(subset(aca, year <= as.Date(e)))
+  return(aca)
+}
 
 #' select transactions on or after date b
 #' @param aca transactions object
 #' @param b date as a string or Date object, defaults to beginning of current year
 #' @export
-since  <- function(aca, b = lubridate::floor_date(today-10, 'year'))
-  subset(aca, date >= as.Date(b))
+since  <- function(aca, b = lubridate::floor_date(today-10, 'year')) {
+  if ('date'  %in% names(aca)) return(subset(aca, date >= as.Date(b)))
+  if ('month' %in% names(aca)) return(subset(aca, month >= as.Date(b)))
+  if ('year'  %in% names(aca)) return(subset(aca, year >= as.Date(b)))
+  return(aca)
+}
 
 #' pick out transactions around today
 #' @param aca transactions object
@@ -449,8 +484,9 @@ now <- function(aca, before = 0, after = 0)
 #' @param aca transactions object
 #' @param a regular expression of note field to select
 #' @export
-note <- function(aca, a)
-    aca %>% subset(., grepl(a, .$note, ignore.case = TRUE))
+note <- function(aca, a) {
+  aca %>% subset(., grepl(a, .$note, ignore.case = TRUE))
+}
 
 #' account selection
 #' @param aca transactions object
@@ -496,54 +532,68 @@ notunits  <- function(aca, u)
 #' 'standard loading scheme
 #' @param intrans transactions objecct
 #' @param inprx   price info
+#' @import tibble
 #' @export
-std   <- function(intrans = pycsv(), inprx = pyprx())
-    valattach(intrans, inprx)
+std   <- function(intrans = pycsv(), inprx = pyprx(), e = today)
+    valattach(intrans, inprx) %>% xfields %>% until(e) %>% tibble::as_tibble(.)
 
-#' see std entries : select all but 'bad' accounts
+#' good accounts for selection
 #' @export
-cs <- function()
-  std() %>% xfields %>% until
+gacc   <- gestalt::fn(x ~ acc(x, 'Cash|Broker|Bonds|Ren|Retire'))
 
-#' see tariff entries :  (Tax, Trips, Expenses)
+#' tariff accounts for selection
 #' @export
-ct <- function()
-  cs() %>% acc(tacc)
+tacc    <- gestalt::fn(x ~ acc(x, 'Tax|Trips|Expenses|Equity|Sink|Family'))
 
-#' see both cash and investment entries : not 'bad' accounts and not interesting accounts
-#' @export
-cb <- function()
-  cs() %>% notacc(oacc)
+iacc    <- gestalt::fn(x ~ acc(x, 'Earnings|Invest|Income|Interest'))
 
-#' see cash entries : all dollar unit positions
+#' dollar unit records
 #' @export
-cc <- function()
-  cs() %>% notacc(oacc) %>% tunits('\\$')
+dollars <- gestalt::fn(x ~ tunits(x, '\\$'))
+
+#' see good accounts
+#' @export
+cg <- function(...)  std(...) %>% gacc
+
+#' see tariff accounts :  (Tax, Trips, Expenses)
+#' @export
+ct <- function(...)  std(...) %>% tacc
+
+#' see good accounts with dollar units
+#' @export
+cgc <- function(...)  std(...) %>% gacc %>% dollars
 
 #' see investment entries : (all but dollar unit position)
 #' @export
-ci <- function()
-    cs() %>% notacc(oacc) %>% notunits('\\$')
+cgi <- function(...)  std(...) %>% gacc %>% notunits('\\$')
 
-#' see adjustment entries : absolutely bigger than threshold
+#' select balance entries
+#' @param x output of std or equivalent
+#' @export
+bale <- gestalt::fn(x ~ subset(x, grepl('^balance', x$note)))
+
+#' select big amount entries
 #' @param threshold only adjustments absolutely bigger than threshold
+#' @param x output of std or equivalent
 #' @export
-ca <- function(threshold = 1000, X = cs())
-    X %>% subset(grepl('^balance', .$note) & abs(.$amount) > threshold)
+bige <- gestalt::fn(threshold = 1000 , x ~ subset(x, abs(x$amount) > threshold))
 
-#' see xpense entries : absolutely bigger than threshold (default:1000)
-#' @param threshold only expense adjustments bigger than threshold
+#' select xpense entries
+#' @param x output of std or equivalent
 #' @export
-cax <- function(...)
-    ca(...) %>% subset(grepl('Expenses', .$note) & .$account != 'Expenses')
+expe <- gestalt::fn(x ~ subset(x, grepl('Expenses', .$note) & .$account != 'Expenses'))
 
-#' see fixed deposit instruments : absolutely bigger than threshold (default:1000)
+#' see fixed deposit entries
+#' @param x output of std or equivalent
 #' @export
-cf <- function() cs() %>% subset(grepl('type:(cd|ee|frn|tips|ibond|tbill|corp)', .$note))
+fixe <- gestalt::fn(x ~ subset(x ~ grepl('type:(cd|ee|frn|tips|ibond|tbill|corp)', x$note)))
 
 #' see fixed deposit instruments still locked up: absolutely bigger than threshold (default:1000)
+#' @param x output of std or equivalent
+#' @import dplyr
 #' @export
-cl <- function() cf() %>% dplyr::mutate(edate = sub('.*matdate:(.*?) .*', '\\1', .$note)) %>% subset(as.Date(.$edate) > today & date <= today & grepl('start ', .$note) & .$amount > 0)
+locke <- gestalt::fn(x ~ fixe(x) %>% dplyr::mutate(edate = sub('.*matdate:(.*?) .*', '\\1', .$note))
+                        %>% subset(as.Date(.$edate) > today & date <= today & grepl('start ', .$note) & .$amount > 0))
 
 bfields <- function(iam) {
     imlets <- sort(unlist(strsplit(iam, '')))
@@ -552,9 +602,11 @@ bfields <- function(iam) {
     if ('a' %in% imlets) byfields <- c('account', byfields)
     if ('p' %in% imlets) byfields <- c('place',   byfields)
     if ('n' %in% imlets) byfields <- c('note',    byfields)
-    if ('t' %in% imlets) byfields <- c('acctype',    byfields)
-    if ('d' %in% imlets) byfields <- c('date',    byfields)
-    if ('m' %in% imlets) byfields <- c('month',   byfields)
+    if ('t' %in% imlets) byfields <- c('acctype', byfields)
+
+    if ('s' %in% imlets) byfields <- c('sync',    byfields)
+    if ('d' %in% imlets) byfields <- c('date',    byfields) else
+    if ('m' %in% imlets) byfields <- c('month',   byfields) else
     if ('y' %in% imlets) byfields <- c('year',    byfields)
     byfields
 }
@@ -563,35 +615,44 @@ bfields <- function(iam) {
 #' @param byf encoding of by fields
 #' @param X transactions object
 #' @export
-cby <- function(byf, X = cb()) {
-    byf <- deparse(substitute(byf))
-    byf <- bfields(byf)
-    X %<>% sumt(byf)
-    attr(X, 'byfields') <- byf
-    X
+cby <- function(byf, X = std() %>% gacc) {
+  byf <- deparse(substitute(byf))
+  byf <- bfields(byf)
+  sumt(X, byf)
 }
 
-#' smart plot of extracted data, pie charts, multi-panel plots
+#' smart plot of extracted data,
+#' stack plots,
+#' pie charts,
+#' multi-panel plots [deprecated?]
 #' @import ggplot2
-#' @param ...  arguments are passed to cby
+#' @import tidyr
+#' @param ...  cby arguments
 #' @export
 pby <- function(...) {
   X <- cby(...)
-  byf <- attr(X, 'byfields')
-  timetypes <- c('date','month','year')
-  if (!any(timetypes %in% byf)) {
-    gvar <- setdiff(names(X), c('date','val', 'cval','cost','ccost','cret'))
-    graphics::pie(X$val, interaction(subset(X, , gvar)))
-  } else {
-    if (all(byf %in% timetypes)) {
-      (ggplot(X, aes(x = date, y = cval))
-       + geom_point() + geom_line())
-    } else {
-      (ggplot(X, aes(x = date, y = cbyval))
-       + geom_point() + geom_line()
-       + facet_wrap(as.formula(paste('~ ', paste(collapse = '+', setdiff(byf, timetypes))))))
-    }
-  }
+  byf    <- attr(X, 'byfields')
+  q_sync <- attr(X, 'q_sync')
+
+  ttypes <- c('date','month','year')
+  ntf <- setdiff(byf, ttypes)
+  tf  <- intersect(byf, ttypes)
+
+  if (!length(tf))
+    return(graphics::pie(x = X$val, labels = interaction(subset(X, select = byf))))
+
+  if (!length(ntf))
+    return(ggplot(X, aes_string(x = tf, y = 'cval'))
+           + geom_point() + geom_line())
+
+  if (q_sync)
+    return(ggplot(tidyr::unite(X, gfac, !!ntf, sep = '+'),
+                  aes_string(x = tf, y = 'cval', group = 'gfac', color = 'gfac'))
+           + geom_line(position = 'stack'))
+
+  return(ggplot(X, aes_string(x = tf, y = 'cval'))
+         + geom_point() + geom_line()
+         + facet_wrap(stats::formula(paste('~ ', paste(collapse = '+', ntf)))))
 }
 
 #####################################################
@@ -617,7 +678,7 @@ pby <- function(...) {
     ## cs()  # all but Equity entries
     ## ct()  # all tariff entries
     ## ci()  # interesting entries
-    ## cb()  # brokerage entries
+    ## cg()  # brokerage entries
     ## cc()  # cash entries
     ## ca()  # balance adjustments
     ## cax()  # xpense adjustments
@@ -625,7 +686,7 @@ pby <- function(...) {
 
   ## cby(au) ...
 
-  ## cb() to see just investments
+  ## cg() to see just investments
   ## cc() to see cash balances
   ## ci() to see cash and investment balances
   ## ct() to see interesting balances: Tax, Trips, Expenses

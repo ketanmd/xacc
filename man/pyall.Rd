@@ -4,12 +4,10 @@
 \alias{pyall}
 \title{for debugging and for internal use extract all transaction lines}
 \usage{
-pyall(pos = 0, n = 5)
+pyall(pos = 0)
 }
 \arguments{
 \item{pos}{which line is of interest (usually for debugging)}
-
-\item{n}{how many lines around pos to be displayed}
 }
 \value{
 transactions lines as strings invisibly

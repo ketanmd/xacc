@@ -67,6 +67,7 @@ read.fred <- function(csvf) {
   })
   list(cdata)
 }
+
 read.yahoo <- function(csvf) {
   filedate <- .filedate(csvf)
   cdata <- utils::read.csv(csvf, stringsAsFactors = FALSE)
@@ -108,6 +109,7 @@ read.yahoo <- function(csvf) {
   })
   list(cdata)
 }
+
 read.google <- function(csvf) {
   filedate <- .filedate(csvf)
     cdata <- utils::read.csv(csvf, stringsAsFactors = FALSE)
@@ -176,6 +178,7 @@ read.lt <- function(csvf) { # something broken here ?
   )
   list(cdata)
 }
+
 read.csvf <- function(csvf) {
   cdata <- utils::read.csv(csvf, stringsAsFactors = FALSE)
   cdata <- within(cdata, {
@@ -183,6 +186,9 @@ read.csvf <- function(csvf) {
   })
   list(cdata)
 }
+
+#' process a csv file downloaded from jpm
+#' @param csvf csv file from pm to process
 read.jpm <- function(csvf) {
   filedate <- .filedate(csvf)
   cdata <- utils::read.csv(csvf, stringsAsFactors = FALSE, fileEncoding = 'latin1')
@@ -220,19 +226,18 @@ read.jpm <- function(csvf) {
                             ),] %<>% dplyr::mutate(Security = '$', Quantity = 0, Amount = 0)
 
   cdata[cdata$Action %in% c('Interest',           'Dividend',
-                            'Transfers',       #   'Free Delivery',
+                            ##'Transfers',
                             'S. T. Capital Gain', 'L.T. Capital Gain'),] %<>%
       dplyr::mutate(Security = '', Quantity = .$Amount, Amount = '$ 0')
 
-  cdata[cdata$Action %in% c('Free Delivery'),] %<>%
-      dplyr::mutate(#Security = '',
-                 #Quantity = .$Amount,
-#                 Amount = abs(.tonumeric(.$Amount))
+  cdata[cdata$Action %in% c('Free Delivery', 'Transfers'),] %<>%
+      dplyr::mutate(
                  Amount = '$ 0'
              )
 
 
-  cdata[cdata$Action %in% c('Name Change', 'Transfers'),] %<>% dplyr::mutate(Quantity = 0)
+  cdata[cdata$Action %in% c('Name Change'#, 'Transfers'
+                            ),] %<>% dplyr::mutate(Quantity = 0)
 
   cdata %<>% subset(as.Date(.$Date) <= as.Date(filedate))
   list(cdata)
@@ -512,8 +517,10 @@ read.van <- function(csvf) {
 #' @export
 transprocess <- function(csvfiles) {
   alld <- list()
+  message('Working on ', length(csvfiles), ' files:')
   for (csvf in csvfiles) {
-    message("Working on trans from file ", csvf, "\n")
+    message('.', appendLF = FALSE)
+    #message("Working on trans from file ", csvf, "\n")
     bcsvf <- basename(csvf)
     cdata <- NULL
     if (grepl('bad', bcsvf))  cdata <- read.bad(csvf)
@@ -535,6 +542,7 @@ transprocess <- function(csvfiles) {
                            'from')]
     }
   }
+  message('\n')
   return(alld)
 }
 #' process csv file(s) for positions and prices
@@ -543,8 +551,10 @@ transprocess <- function(csvfiles) {
 #' @export
 posprocess <- function(csvfiles) {
   alld <- list()
+  message('Working on pos/prices from ',length(csvfiles),' files :')
   for (csvf in csvfiles) {
-    message("Working on pos/prices from file ", csvf, "\n")
+    message('.', appendLF = FALSE)
+    #message("Working on pos/prices from file ", csvf, "\n")
     bcsvf <- basename(csvf)
     cdata <- NULL
     if (grepl('yahoo', bcsvf))   cdata <- read.yahoo(csvf)
@@ -577,6 +587,7 @@ posprocess <- function(csvfiles) {
 #                           'from')], !is.na(Last.Price) & Last.Price != 0)
     }
   }
+  message('\n')
   return(alld)
 }
 #######################################################################################

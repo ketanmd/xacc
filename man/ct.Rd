@@ -2,10 +2,10 @@
 % Please edit documentation in R/myacc.R
 \name{ct}
 \alias{ct}
-\title{see tariff entries :  (Tax, Trips, Expenses)}
+\title{see tariff accounts :  (Tax, Trips, Expenses)}
 \usage{
-ct()
+ct(...)
 }
 \description{
-see tariff entries :  (Tax, Trips, Expenses)
+see tariff accounts :  (Tax, Trips, Expenses)
 }

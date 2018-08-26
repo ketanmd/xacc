@@ -4,7 +4,7 @@
 \alias{std}
 \title{'standard loading scheme}
 \usage{
-std(intrans = pycsv(), inprx = pyprx())
+std(intrans = pycsv(), inprx = pyprx(), e = today)
 }
 \arguments{
 \item{intrans}{transactions objecct}

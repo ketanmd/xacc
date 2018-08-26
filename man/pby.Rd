@@ -2,13 +2,19 @@
 % Please edit documentation in R/myacc.R
 \name{pby}
 \alias{pby}
-\title{smart plot of extracted data, pie charts, multi-panel plots}
+\title{smart plot of extracted data,
+stack plots,
+pie charts,
+multi-panel plots [deprecated?]}
 \usage{
 pby(...)
 }
 \arguments{
-\item{...}{arguments are passed to cby}
+\item{...}{cby arguments}
 }
 \description{
-smart plot of extracted data, pie charts, multi-panel plots
+smart plot of extracted data,
+stack plots,
+pie charts,
+multi-panel plots [deprecated?]
 }
