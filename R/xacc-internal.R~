@@ -1,0 +1,45 @@
+
+newloadone <- function(g) {
+    a <- readLines(g, warn = FALSE) %>% sub('\\\xae', '', .)
+    a[grep('^(;|\\s*$|#||\\*)', a, invert = TRUE)] -> a1
+    if (!length(a1)) {
+        warning('Found NO lines from file ', ff)
+        return(list())
+    }
+
+   ## move balance lines to end
+   balancelines <- grepl(' bal:', a1)
+   a1 <- c(a1[!balancelines], a1[balancelines])
+
+   bbegins = grep ('^ ', a1, invert = TRUE)
+   blengths = diff(c(bbegins, length(a1)+1))
+
+   fixfirst <- {
+       sub('^P +([^ ]+) +([^ ]+) +([^ ]+)', '\\1 type:price ticker:\\2 price:\\3', .) %>>>%
+           sub(' move:', ' type:move  move:', .) %>>>%
+           sub('^([^ ]+) +bal:([^ ]+) +== *', '\\1 type:assert to:\\2 ', .) %>>>%
+           sub('^([^ ]+) +bal:([^ ]+) += *',  '\\1 type:balance to:\\2 ', .) %>>>%
+        #   sub('^(\\d.*?) .*', '\\1', .) %>>>%
+           {tibble(data = .)} %>>>%
+           tidyr::separate(., data, c('date', 'rest'), extra = 'merge', sep = ' ') %>>>%
+           glimpse %>>>%
+           dplyr::mutate(., date = !!.cleandates(date)) %>>>%
+           glimpse %>>>%
+           tidyr::unite(., sep = ' ') %>>>% unlist(., use.names = FALSE)
+   }
+
+   a1[bbegins] %<>% fixfirst
+
+   tibble(lines = a1, file = g, id = rep(bbegins, blengths)) %>%
+       group_by(., file, id) %>%
+       tidyr::nest(.)
+ }
+
+newblocksprocess <- function() {
+    g <- '/home/family/money/accounting/passbooks/2015.passbook'
+    g %>% lapply(newloadone) %>%
+        bind_rows %>% rowwise %>%
+            dplyr::mutate(data = postone(data))
+}
+
+

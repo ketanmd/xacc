@@ -69,6 +69,44 @@ bigtext <- function(size = 24)
   }
 }
 
+.fixknown <- function(sym, iname, inmapfile, symdefault = '') {
+    readLines(inmapfile) -> inmaptable
+    inmapid    <- sub(' .*', '', inmaptable)
+    inmaptable <- sub('.*? ', '', inmaptable)
+    ## identify entries with sym == '' and for which we already
+    ## recognize the Investment.Name
+    badsym <- sym == ''
+    goodn  <- match(iname[badsym],  inmaptable)
+
+    fixable <- (!is.na(goodn)) & goodn != 0
+
+#    badb <- data.frame(Symbol = sym, IName = iname, isin = iname %in% inmaptable)
+#    saveRDS(badb, '/tmp/foo')
+
+    newnames <- setdiff(unique(setdiff(iname[badsym], inmaptable)), '')
+    outmapfile <- paste0(inmapfile, '.newnames')
+
+    if (length(newnames) > 0) {
+      message("The following names are unknown:", newnames)
+      message('Writing new names to ', outmapfile)
+      if (file.exists(outmapfile)) {
+        oldnewnames <- readLines(outmapfile)
+        newnames <- unique(sort(union(oldnewnames, newnames)))
+      }
+      writeLines(newnames, sep = '\n', con = outmapfile)
+    } else {
+        unlink(outmapfile)
+    }
+    ## fix what we can and finish up
+  #  str(list(sym,badsym,goodn,fixable,iname,inmapid,inmaptable))
+    sym[badsym][fixable] <- inmapid[goodn[fixable]]
+
+#    print(list(goodn,fixable,inmapid[goodn[fixable]], sym[badsym]))
+    sym[sym == ''] <- symdefault
+    return(sym)
+}
+
+
 # try to match x in column fr
 # for any row that matches, use column to to redefine x
 # for any row that does not match, use column ax to redefine x
@@ -89,40 +127,6 @@ bigtext <- function(size = 24)
 
 .cleanna <- function(x, dval) ifelse(is.na(x), dval, x)
 
-
-.newcleandates <- as.character %>>>%
-    {gsub('-', '/', .)} %>>>%
-    glimpse %>>>%
-        {case_when(nchar(.) == 4
-                         ~ paste0(., '/12/31'),
-                         (nchar(.) == 8 & !grepl('/', .))
-                         ~ paste0(substr(.,1,4),'/',
-                                  substr(.,5,6),'/',
-                                  substr(.,7,8)),
-                         TRUE ~ .)} %>>>%
-    str
-
-foo <- 
-        {tibble(date = .)} %>>>%
-    glimpse %>>>%
-        tidyr::extract(., date,
-                       c('year','month','day'),
-                       '(\\d+)/(\\d+)/(\\d+)') %>>>%
-    glimpse %>>>%
-        dplyr::mutate(date = 0.5*(10001*(as.integer(year)+as.integer(day))
-                   + 200*as.integer(month)
-                   + 9999*abs(as.integer(year)-as.integer(day))),
-               date = sub('(....)(..)(..)', '\\1/\\2/\\3', as.character(date))) %>>>%
-    glimpse %>>>%
-        dplyr::select(date) %>>>% unlist %>>>% unname
-    ## yyyy       yyyymmdd
-    ## yyyy/mm/dd yyyy/mm/d
-    ## yyyy/m/dd  yyyy/m/d
-    ## dd/mm/yyyy d/mm/yyyy
-    ## dd/m/yyyy  d/m/yyyy
-
-#  x <- c('20180104','2013','2013-3-4', '4-15-2011')
-#    xf <- fx(x)
 
 .cleandates <- function(x) {
   x <- gsub(pattern = '-',
@@ -184,6 +188,6 @@ lstr <- function(...)
 #' @param x string
 #' @param split delimiter to split string x
 #' @export
-qw <- function(x, split = ',')
-  unlist(strsplit(x, split))
+qw <- fn (x, split = ',' ~  unlist(strsplit(x, split)))
 
+tpm <- fn(n = 300 ~ options(tibble.print_min = n))

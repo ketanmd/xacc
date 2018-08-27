@@ -22,9 +22,9 @@ loadone <- function(g) {
     ## make a list of blocks
     plyr::alply(adf, .margins = 1, function(x)
       a1[x$b:x$e]) %>% unname
-  }
+}
 
-  prepost <- function(ab) {
+prepost <- function(ab) {
     sapply(ab, length) > 1 -> qblocks
 
     grepl('^P ', ab) & !qblocks  -> qpricelines
@@ -53,9 +53,9 @@ loadone <- function(g) {
     c(ab[!qbalancelines],
       ab[qbalancelines]) %>%
       plyr::llply(procdate)
-  }
+}
 
-  seqs <- function(sdate, edate, intervals) {
+seqs <- function(sdate, edate, intervals) {
     intervals <- gsub('-', ' ', intervals)
     stringi::stri_split_regex(intervals, ',') %>% unlist -> intervals
     lapply(intervals,  seqdates, sdate = sdate, edate = edate) -> thedates
@@ -68,9 +68,9 @@ loadone <- function(g) {
       c(sdate, edate) %>%
       sort %>% unique -> thedates
       return(thedates)
-  }
+}
 
-  seqdates <- function(sdate, edate, interval) {
+seqdates <- function(sdate, edate, interval) {
     datesub <- 0
     if (substr(interval, nchar(interval), nchar(interval)) == '<') {
       interval <- substr(interval, 1, nchar(interval) - 1)
@@ -100,9 +100,10 @@ loadone <- function(g) {
     #        str(list(sdate, edate, interval, datesub, seq.Date(sdate,edate,interval),
     #                 seq.Date(sdate,edate,interval)+datesub))
     return(seq.Date(sdate, edate, interval) + datesub)
-  }
+}
 
-  postone <- function(b, verbose = FALSE) {
+postone <- function(b, verbose = FALSE) {
+  #  glimpse(b)
     knowf <- .knowf()
     if (!tibble::is.tibble(b)) b <- tibble(lines = b)
 
@@ -636,42 +637,6 @@ loadone <- function(g) {
     a[order(line1key(a, verbose))]
   }
 
-  # newloadone <- function(g) {
-  #   a <- readLines(g, warn = FALSE) %>% sub('\\\xae', '', .)
-  #   a[grep('^(;|\\s*$|#||\\*)', a, invert = TRUE)] -> a1
-  #   if (!length(a1)) {
-  #     warning('Found NO lines from file ', ff)
-  #     return(list())
-  #   }
-  #
-  #   ## move balance lines to end
-  #   balancelines <- grepl(' bal:', a1)
-  #   a1 <- c(a1[!balancelines], a1[balancelines])
-  #
-  #   bbegins = grep ('^ ', a1, invert = TRUE)
-  #   blengths = diff(c(bbegins, length(a1)+1))
-  #
-  #   fixfirst <- {
-  #       sub('^P +([^ ]+) +([^ ]+) +([^ ]+)', '\\1 type:price ticker:\\2 price:\\3', .) %>>>%
-  #           sub(' move:', ' type:move  move:', .) %>>>%
-  #           sub('^([^ ]+) +bal:([^ ]+) +== *', '\\1 type:assert to:\\2 ', .) %>>>%
-  #           sub('^([^ ]+) +bal:([^ ]+) += *',  '\\1 type:balance to:\\2 ', .) %>>>%
-  #        #   sub('^(\\d.*?) .*', '\\1', .) %>>>%
-  #           {tibble(data = .)} %>>>%
-  #           tidyr::separate(., data, c('date', 'rest'), extra = 'merge', sep = ' ') %>>>%
-  #           glimpse %>>>%
-  #           dplyr::mutate(., date = !!.cleandates(date)) %>>>%
-  #           glimpse %>>>%
-  #           tidyr::unite(., sep = ' ') %>>>% unlist(., use.names = FALSE)
-  #   }
-  #
-  #   a1[bbegins] %<>% fixfirst
-  #
-  #   tibble(lines = a1, file = g, id = rep(bbegins, blengths)) %>%
-  #       group_by(., file, id) %>%
-  #       tidyr::nest(.)
-  # }
-
 #' process files, extract blocks, expand input blocks as needed
 #' returns blocks ready for ledger
 #' @param ff character vector of files to process
@@ -693,11 +658,4 @@ blocksprocess <- function(ff, verbose = FALSE) {
   ff
 }
 
-# newblocksprocess <- function() {
-#     g <- '/home/family/money/accounting/passbooks/2015.passbook'
-#     g %>% lapply(newloadone) %>%
-#         bind_rows %>% rowwise %>%
-#             dplyr::mutate(data = postone(data))
-#   }
-#
 

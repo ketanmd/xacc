@@ -1,4 +1,3 @@
-
 # > cby(adu,std()) %>% subset(caval < 0) -> nst
 # > subset(nst, !grepl('Cash|Interest|Earnings|Expenses|Income|Tax|Equity', account))
 # # A tibble: 4 x 8
@@ -9,10 +8,6 @@
 # 3      $ Retire:TIAA:K -422069.2 -422069.2      1 2013-05-30  -31550.86 -394547.37
 # 4      $  Retire:JPM:K -471085.7 -471085.7      1 2013-06-30 -504675.07  -49016.45
 # these were all taken care of for now.
-
-swa <- function(x) {
-  x %>% dplyr::mutate(., foo = .$bar/2)
-}
 
 read.bad <- function(csvf) {
   cdata <- utils::read.csv(csvf, stringsAsFactors = FALSE)
@@ -342,42 +337,6 @@ read.vanpos <- function(csvf) {
   return(alld)
 }
 
-.fixknown <- function(sym, iname, inmapfile, symdefault = '') {
-    readLines(inmapfile) -> inmaptable
-    inmapid    <- sub(' .*', '', inmaptable)
-    inmaptable <- sub('.*? ', '', inmaptable)
-    ## identify entries with sym == '' and for which we already
-    ## recognize the Investment.Name
-    badsym <- sym == ''
-    goodn  <- match(iname[badsym],  inmaptable)
-
-    fixable <- (!is.na(goodn)) & goodn != 0
-
-#    badb <- data.frame(Symbol = sym, IName = iname, isin = iname %in% inmaptable)
-#    saveRDS(badb, '/tmp/foo')
-
-    newnames <- setdiff(unique(setdiff(iname[badsym], inmaptable)), '')
-    outmapfile <- paste0(inmapfile, '.newnames')
-
-    if (length(newnames) > 0) {
-      message("The following names are unknown:", newnames)
-      message('Writing new names to ', outmapfile)
-      if (file.exists(outmapfile)) {
-        oldnewnames <- readLines(outmapfile)
-        newnames <- unique(sort(union(oldnewnames, newnames)))
-      }
-      writeLines(newnames, sep = '\n', con = outmapfile)
-    } else {
-        unlink(outmapfile)
-    }
-    ## fix what we can and finish up
-  #  str(list(sym,badsym,goodn,fixable,iname,inmapid,inmaptable))
-    sym[badsym][fixable] <- inmapid[goodn[fixable]]
-
-#    print(list(goodn,fixable,inmapid[goodn[fixable]], sym[badsym]))
-    sym[sym == ''] <- symdefault
-    return(sym)
-}
 
 read.van <- function(csvf) {
   clines <- readLines(csvf)
@@ -508,9 +467,10 @@ read.van <- function(csvf) {
   return(alld)
 }
 
-.filedate <- function(fname) {
-    .cleandates(sub('\\..*', '', basename(fname)))
-}
+#############################################################################
+
+.filedate <- fn (fname ~ .cleandates(sub('\\..*', '', basename(fname))))
+                 
 #' process csv file(s) for transactions
 #' @param csvfiles character vector of csv files to process
 #'

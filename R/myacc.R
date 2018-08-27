@@ -1,4 +1,4 @@
-utils::globalVariables(c('.', '%>%', '%<>%', '%T>%'))
+utils::globalVariables(c('.', '%>%', '%<>%', '%T>%', '%>>>%'))
 
 #' find all csvfiles to be processed
 #'
